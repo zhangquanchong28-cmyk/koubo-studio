@@ -39,6 +39,9 @@ def load_cfg():
             cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
         except (ValueError, OSError):
             pass
+    if os.environ.get("KOUBO_FOLLOW") == "1" and not (cfg.get("api_key") or "").strip():
+        # 云端模式：OpenRouter Key 由网络代理注入，这里只放占位符
+        cfg["api_key"], cfg["provider"] = "proxy-injected", "openrouter"
     return cfg
 
 
@@ -184,6 +187,24 @@ def fill_broll(pid, cfg, ids=None, force=False, source=None):
     if total:
         log(pid, f"AI 生图 {ai_n} 张，约 ${total:.3f}")
     return total
+
+
+def job_chat(pid, text):
+    cfg = load_cfg()
+
+    def fn():
+        data = load_transcript(pid)
+        plan = json.loads(_plan_path(pid).read_text(encoding="utf-8"))
+        new, reply, rule, usd = planner.revise_plan(cfg, data, plan, text, log=lambda m: log(pid, m))
+        _write_plan(pid, new)
+        if rule:
+            planner.remember_rule(rule)
+            reply += f"（已记住：{rule}）"
+        hist = (read_state(pid).get("chat") or [])[-19:]
+        hist.append({"q": text, "a": reply, "usd": usd, "at": time.time()})
+        update(pid, chat=hist, stage="planned")
+        log(pid, "AI：" + reply)
+    run_job(pid, "AI 改方案", fn)
 
 
 def job_broll(pid, ids=None, force=False, source=None):
@@ -480,6 +501,13 @@ class H(BaseHTTPRequestHandler):
                     if not (pdir(pid) / "plan.json").is_file():
                         return self._json({"error": "先生成或保存方案"}, 400)
                     job_jianying(pid)
+                elif act == "chat":
+                    text = str(body.get("text", "")).strip()
+                    if not text:
+                        return self._json({"error": "说点什么再发送"}, 400)
+                    if not _plan_path(pid).is_file():
+                        return self._json({"error": "先生成方案，再用一句话修改"}, 400)
+                    job_chat(pid, text[:500])
                 elif act == "broll":
                     if not _plan_path(pid).is_file():
                         return self._json({"error": "先生成或保存方案"}, 400)

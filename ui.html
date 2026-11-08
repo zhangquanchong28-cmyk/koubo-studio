@@ -40,6 +40,8 @@ tr.deleted td.txt{color:var(--del);text-decoration:line-through}
 tr.filler td.txt{color:var(--del)}
 td.txt{min-width:260px}
 td.br{min-width:150px}
+.chat{max-height:220px;overflow:auto;margin-bottom:10px;font-size:14px}
+.chat-q{margin:6px 0 2px;color:var(--muted)} .chat-a{margin:0 0 8px;padding:6px 10px;background:var(--chip);border-radius:8px}
 td.br img{display:block;width:120px;height:80px;object-fit:cover;border-radius:6px;margin:6px 0 4px;cursor:zoom-in;background:var(--chip)}
 td.br .bd{width:140px;font-size:12px;margin-top:4px}
 td.br .mini{font-size:12px;padding:2px 6px;margin:2px 2px 0 0}
@@ -190,7 +192,7 @@ async function selectProject(id) {
   cur = id; dirty = false; st = null; await refresh(true); loadProjects();
 }
 function sigOf(s) {   // 方案/成片有变化才整页重画（别打断你正在看的视频）
-  return JSON.stringify([s.stage, s.plan_mtime, s.rendered_at, s.result && s.result.duration, s.jianying, s.concat, !!s.transcript]);
+  return JSON.stringify([s.stage, s.plan_mtime, (s.chat || []).length, s.rendered_at, s.result && s.result.duration, s.jianying, s.concat, !!s.transcript]);
 }
 async function refresh(full) {
   if (!cur) return;
@@ -229,7 +231,7 @@ function render() {
       <button class="primary" onclick="makePlan()" data-busy>${plan ? "重新生成方案" : "AI 生成方案"}</button></div>
       ${plan ? `<p class="muted" style="margin:8px 0 0">💡 ${esc(plan.notes || "")}${plan.usage ? ` <span class="tag">本次约 $${plan.usage.usd}</span>` : ""}</p>` : ""}</div>`;
   }
-  if (t && plan) h += planEditor(t, plan);
+  if (t && plan) h += chatBox() + planEditor(t, plan);
   if (st.result) {
     const v = Date.now();
     h += `<div class="card"><h2>③ 成片（${Math.round(st.result.duration)} 秒）</h2>
@@ -331,6 +333,18 @@ function brollCell(p, b) {
     ${b.layout ? `<input class="bd" value="${esc(b.desc || "")}" placeholder="画面描述，如：深夜加班的写字楼" oninput="edit()">
       ${img}${b.image ? `<small>${esc(b.credit || "")}</small>` : `<small>还没有图</small>`}
       <button class="mini" onclick="brollOne(${p.id}, null)" data-busy>${b.image ? "换一张" : "找图"}</button><button class="mini" onclick="brollOne(${p.id}, 'ai')" data-busy>AI画</button><button class="mini" onclick="brollUp(${p.id})" data-busy>上传</button>` : ""}</td>`;
+}
+function chatBox() {
+  const hist = (st.chat || []).slice(-6).map(c => `<div class="chat-q">🙋 ${esc(c.q)}</div><div class="chat-a">🤖 ${esc(c.a)}${c.usd ? ` <span class="tag">$${c.usd}</span>` : ""}</div>`).join("");
+  return `<div class="card"><h2>💬 跟 AI 说 <span class="muted" style="font-weight:400">— 一句话改方案，比如「第 3 句删掉」「开头那个数字做成滚动」「第 12 句配一张办公室的图」「记住：以后标题都要有数字」</span></h2>
+    ${hist ? `<div class="chat">${hist}</div>` : ""}
+    <div class="row"><textarea id="chatIn" rows="2" style="flex:1;min-width:240px" placeholder="想怎么改，直接说（Ctrl+Enter 发送）"
+      onkeydown="if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) sendChat()"></textarea>
+    <button class="primary" onclick="sendChat()" data-busy>发送</button></div></div>`;
+}
+async function sendChat() {
+  const el = $("#chatIn"), text = el.value.trim(); if (!text) return;
+  try { if (dirty) await savePlan(); await post(`/api/p/${cur}/chat`, {text}); el.value = ""; refresh(false); } catch (e) { alert(e.message); }
 }
 async function doBroll() {
   try { if (dirty) await savePlan(); await post(`/api/p/${cur}/broll`, {}); refresh(false); } catch (e) { alert(e.message); }

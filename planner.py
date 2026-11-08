@@ -94,9 +94,9 @@ def phrases_text(phrases):
     return "\n".join(lines)
 
 
-def _call(client, cfg, user_text, log):
+def _call(client, cfg, user_text, log, system=None):
     kwargs = dict(
-        model=model_id(cfg), max_tokens=16000, system=system_prompt(),
+        model=model_id(cfg), max_tokens=16000, system=system or system_prompt(),
         thinking={"type": "adaptive"}, output_config={"effort": cfg.get("effort", "medium")},
         messages=[{"role": "user", "content": user_text}],
     )
@@ -119,8 +119,16 @@ def ai_plan(cfg, data, notes="", log=print):
                  f"用户要求：{notes or '无特别要求，按口播精品标准剪'}\n\n"
                  f"以下是转写短句（编号、开始时间、时长、文本）：\n{phrases_text(data['phrases'])}")
     log(f"正在请 {model_id(cfg)} 生成剪辑方案…")
+    text, usage = _ask(client, cfg, user_text, log)
+    plan = parse_plan(text, data)
+    plan["usage"] = usage
+    return plan
+
+
+def _ask(client, cfg, user_text, log, system=None):
+    """发一次请求，统一处理报错和计费，返回 (文本, 用量)。"""
     try:
-        resp = _call(client, cfg, user_text, log)
+        resp = _call(client, cfg, user_text, log, system)
     except anthropic.AuthenticationError:
         raise RuntimeError("API Key 无效，请在设置里检查。")
     except anthropic.PermissionDeniedError:
@@ -139,9 +147,55 @@ def ai_plan(cfg, data, notes="", log=print):
     u = resp.usage
     cost = estimate_cost(model_id(cfg), u.input_tokens, u.output_tokens)
     log(f"用量：输入 {u.input_tokens} / 输出 {u.output_tokens} tokens，约 ${cost:.3f}")
-    plan = parse_plan(text, data)
-    plan["usage"] = {"input": u.input_tokens, "output": u.output_tokens, "usd": round(cost, 4)}
-    return plan
+    return text, {"input": u.input_tokens, "output": u.output_tokens, "usd": round(cost, 4)}
+
+
+REVISE_PROMPT = """
+
+## 现在的任务：按用户的一句话修改已有方案
+你会拿到转写短句、当前方案 JSON 和用户的修改要求。
+- 只改用户要求的部分，其他保持原样（包括 broll 里已有的 image/source/credit 字段，原样带上）。
+- 用户说的"第 N 句"指编号 N。用户按"第几秒"说位置时，按句子开始时间找最接近的编号。
+- 新加或改了描述的配图：image 留空字符串，程序会重新找图。
+- 用户的话里如果有以后都要遵守的经验（"以后都…""记住…""我习惯…"），把它改写成一条具体的剪辑规则放进 remember，否则 remember 为空字符串。
+只输出一个 JSON 对象，不要其他文字：
+{"plan": {完整的新方案，格式同上}, "reply": "一两句中文，告诉用户你改了什么", "remember": ""}"""
+
+
+def revise_plan(cfg, data, plan, instruction, log=print):
+    """用户一句话改方案。返回 (新方案, 回复, 要记住的经验)。"""
+    client = make_client(cfg)
+    if client is None:
+        raise RuntimeError("一句话改方案需要 AI，请先在设置里填 API Key。")
+    cur = {k: v for k, v in plan.items() if k != "usage"}
+    user_text = (f"视频总时长 {data['duration']:.0f} 秒。\n转写短句：\n{phrases_text(data['phrases'])}\n\n"
+                 f"当前方案：\n{json.dumps(cur, ensure_ascii=False)}\n\n用户的修改要求：{instruction}")
+    log(f"AI 正在按「{instruction[:40]}」修改方案…")
+    text, usage = _ask(client, cfg, user_text, log, system=system_prompt() + REVISE_PROMPT)
+    raw = _json_from(text)
+    new = sanitize(raw.get("plan") or {}, data)
+    new["notes"] = new.get("notes") or plan.get("notes", "")
+    old_usd = (plan.get("usage") or {}).get("usd", 0)
+    new["usage"] = dict(usage, usd=round(old_usd + usage["usd"], 4))
+    return new, str(raw.get("reply") or "已修改。"), str(raw.get("remember") or "").strip(), usage["usd"]
+
+
+def remember_rule(rule, section="通用"):
+    """把一条经验追加到 经验/我的经验.md 对应小节。"""
+    rule = rule.strip().lstrip("-").strip()
+    if not rule:
+        return
+    EXP_FILE.parent.mkdir(exist_ok=True)
+    text = EXP_FILE.read_text(encoding="utf-8") if EXP_FILE.is_file() else "# 我的剪辑经验\n\n## 通用\n"
+    head = f"## {section}"
+    if head not in text:
+        text = text.rstrip() + f"\n\n{head}\n"
+    i = text.index(head) + len(head)
+    j = text.find("\n## ", i)
+    j = len(text) if j < 0 else j
+    block = text[i:j].rstrip() + f"\n- {rule}\n"
+    text = text[:i] + block + ("\n" + text[j:].lstrip("\n") if j < len(text) else "")
+    EXP_FILE.write_text(text, encoding="utf-8")
 
 
 PRICES = {"opus-5.5": (4, 20), "opus-5-5": (4, 20), "sonnet-5.5": (2, 10), "sonnet-5-5": (2, 10),
