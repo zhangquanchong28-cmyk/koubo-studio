@@ -315,6 +315,7 @@ class H(BaseHTTPRequestHandler):
             if parts == ["api", "config"]:
                 cfg = load_cfg()
                 cfg["has_key"] = bool(cfg.get("api_key"))
+                cfg["follow"] = os.environ.get("KOUBO_FOLLOW") == "1"   # 云端观看模式：自动跟随 Claude 正在操作的项目
                 for sk in SECRET_KEYS:
                     k = cfg.get(sk, "")
                     cfg[sk] = (k[:6] + "…" + k[-4:]) if len(k) > 12 else ("已填写" if k else "")
@@ -325,7 +326,9 @@ class H(BaseHTTPRequestHandler):
                     for d in sorted(PROJECTS.iterdir(), reverse=True):
                         st = read_state(d.name) if d.is_dir() else None
                         if st:
-                            out.append({k: st.get(k) for k in ("id", "name", "stage", "busy")})
+                            o = {k: st.get(k) for k in ("id", "name", "stage", "busy")}
+                            o["touched"] = (d / "state.json").stat().st_mtime
+                            out.append(o)
                 return self._json(out)
             if len(parts) == 3 and parts[:2] == ["api", "p"]:
                 pid = parts[2]
@@ -339,6 +342,7 @@ class H(BaseHTTPRequestHandler):
                         p.pop("words", None)
                 if (d / "plan.json").is_file():
                     st["plan"] = json.loads((d / "plan.json").read_text(encoding="utf-8"))
+                    st["plan_mtime"] = (d / "plan.json").stat().st_mtime
                 return self._json(st)
             if len(parts) == 5 and parts[:2] == ["api", "p"] and parts[3] == "file":
                 pid, name = parts[2], parts[4]
@@ -506,7 +510,7 @@ def main():
     port = int(os.environ.get("KOUBO_PORT", "8765"))
     for p in range(port, port + 20):
         try:
-            srv = ThreadingHTTPServer(("127.0.0.1", p), H)
+            srv = ThreadingHTTPServer((os.environ.get("KOUBO_HOST", "127.0.0.1"), p), H)
             break
         except OSError:
             continue

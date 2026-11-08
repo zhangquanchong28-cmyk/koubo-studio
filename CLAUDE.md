@@ -19,6 +19,7 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 - 语音模型 faster-whisper medium（约 1.5GB）第一次转写时自动下载；HF 下不动会自动换 hf-mirror.com。
 - AI（方案 + 生图）走 OpenRouter。云端环境里 Key 由网络代理注入，代码里的占位符是 `proxy-injected`，
   **永远不要让用户把 Key 贴进聊天**；没配好就用 request_credential 让用户在安全表单里填（host: openrouter.ai）。
+- 观看模式：用户能在 App 右侧预览窗实时看你操作，启动方式见技能文件「打开观看模式」。
 - Python 走代理时如遇证书错误：`export SSL_CERT_FILE=/root/.ccr/ca-bundle.crt`（只在云端容器里需要）。
 
 ## 代码地图

@@ -137,6 +137,8 @@ const post = (p, body) => api(p, {method: "POST", headers: {"Content-Type": "app
 async function loadCfg() {
   const c = await api("/api/config");
   for (const k of ["provider","api_key","model","effort","font","whisper_model","device","bgm_vol","jianying_root","concat_path","broll_source","max_ai_images","image_model","pexels_key","pixabay_key"]) { const el = $("#c_" + k); if (el) el.value = c[k] ?? ""; }
+  follow = !!c.follow;
+  if (follow) { $("#keyhint").textContent = "☁ 云端观看模式：Claude 的每一步操作这里都会实时显示，你也可以直接点"; return; }
   $("#keyhint").textContent = c.has_key ? `AI：${c.provider === "openrouter" ? "OpenRouter" : "Anthropic"} · ${c.model || "Opus 5.5"}` : "未填 API Key（将使用本地规则方案）";
 }
 function openCfg() { loadCfg(); cfg.showModal(); }
@@ -148,8 +150,13 @@ async function saveCfg() {
   await post("/api/config", b); cfg.close(); loadCfg();
 }
 
+let follow = false, lastSig = "";
 async function loadProjects() {
   const list = await api("/api/projects");
+  if (follow && list.length) {   // 观看模式：自动切到 Claude 正在操作（最近有动静）的项目
+    const hot = list.reduce((a, b) => (b.touched > a.touched ? b : a));
+    if (hot.id !== cur && !dirty && (hot.busy || !cur)) { cur = hot.id; st = null; refresh(true); }
+  }
   $("#projects").innerHTML = list.map(p => `<div class="proj ${p.id === cur ? "on" : ""}" onclick="selectProject('${p.id}')">
     ${esc(p.name)}<small>${p.busy ? "⏳ " + p.busy : ({new:"新建",transcribed:"已转写",planned:"已有方案",rendered:"✅ 已出片"})[p.stage] || ""}</small></div>`).join("") || '<p class="muted">还没有项目</p>';
 }
@@ -182,17 +189,23 @@ async function selectProject(id) {
   if (dirty && cur !== id && !confirm("方案有修改还没保存，确定切换？")) return;
   cur = id; dirty = false; st = null; await refresh(true); loadProjects();
 }
+function sigOf(s) {   // 方案/成片有变化才整页重画（别打断你正在看的视频）
+  return JSON.stringify([s.stage, s.plan_mtime, s.rendered_at, s.result && s.result.duration, s.jianying, s.concat, !!s.transcript]);
+}
 async function refresh(full) {
   if (!cur) return;
   const s = await api("/api/p/" + cur);
   const wasBusy = st && st.busy;
   const first = !st;
   st = s;
-  if (full || first || (wasBusy && !s.busy)) render(); else renderStatus();
+  const sig = sigOf(s), changed = sig !== lastSig;
+  lastSig = sig;
+  if (full || first || (wasBusy && !s.busy) || (changed && !dirty)) render(); else renderStatus();
   clearTimeout(timer);
-  if (s.busy) timer = setTimeout(() => refresh(false), 1200);
+  timer = setTimeout(() => refresh(false), s.busy ? 1200 : 2500);   // 一直轮询：Claude 在云端改了方案这里会自己更新
   if (wasBusy && !s.busy) loadProjects();
 }
+setInterval(() => loadProjects().catch(() => {}), 3000);
 
 function renderStatus() {
   const box = $("#status"); if (!box) return;
@@ -220,7 +233,7 @@ function render() {
   if (st.result) {
     const v = Date.now();
     h += `<div class="card"><h2>③ 成片（${Math.round(st.result.duration)} 秒）</h2>
-      <video controls src="/api/p/${cur}/file/成片.mp4?v=${v}"></video>
+      <video controls style="max-height:70vh" src="/api/p/${cur}/file/成片.mp4?v=${v}"></video>
       <div class="row" style="margin-top:10px">
         <a href="/api/p/${cur}/file/成片.mp4?dl=1"><button class="primary">下载成片 mp4</button></a>
         <a href="/api/p/${cur}/file/字幕.srt?dl=1"><button>下载字幕 srt（可导入剪映）</button></a>

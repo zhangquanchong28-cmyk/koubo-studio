@@ -62,7 +62,12 @@ def cmd_new(a):
     server.update(pid, source=str(src))
     print(f"项目编号：{pid}")
     c = cfg()
-    data = server.asr.transcribe(src, c["whisper_model"], c["device"], log=say(pid))
+    server.update(pid, busy="Claude 转写", progress=0.0)
+    try:
+        data = server.asr.transcribe(src, c["whisper_model"], c["device"], log=say(pid),
+                                     progress=lambda x: server.update(pid, progress=x))
+    finally:
+        server.update(pid, busy="")
     (server.pdir(pid) / "transcript.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     server.update(pid, stage="transcribed")
     print(f"转写完成：{len(data['phrases'])} 句，{data['duration']:.0f} 秒")
@@ -118,6 +123,7 @@ def cmd_check(a):
     if "usage" in raw:
         plan["usage"] = raw["usage"]
     server._write_plan(a.pid, plan)
+    server.log(a.pid, "Claude 修改了方案")
     print("方案已校验保存。")
 
 
@@ -135,8 +141,9 @@ def cmd_render(a):
         server.fill_broll(a.pid, c)
     plan = json.loads(server._plan_path(a.pid).read_text(encoding="utf-8"))
     res = packer.render(server.source_of(a.pid), data, plan, server.pdir(a.pid) / "out", font=c["font"],
-                        bgm_vol=float(c.get("bgm_vol", 0.10)), log=say(a.pid), broll_dir=server.pdir(a.pid) / "broll")
-    server.update(a.pid, stage="rendered", result=res)
+                        bgm_vol=float(c.get("bgm_vol", 0.10)), log=say(a.pid), broll_dir=server.pdir(a.pid) / "broll",
+                        progress=lambda x: server.update(a.pid, progress=x))
+    server.update(a.pid, stage="rendered", result=res, rendered_at=__import__("time").time())
     print(json.dumps(res, ensure_ascii=False))
 
 
@@ -213,7 +220,21 @@ def main():
     p = sub.add_parser("frames"); p.add_argument("pid"); p.add_argument("--at")
     sub.add_parser("list")
     a = ap.parse_args()
-    globals()["cmd_" + a.cmd](a)
+    label = {"plan": "AI 出方案", "broll": "找配图", "render": "出片", "jianying": "导出剪映草稿",
+             "check": "修改方案"}.get(a.cmd)
+    pid = getattr(a, "pid", None)
+    if label and pid and server.read_state(pid):
+        # 让网页工作台（观看模式）实时显示 Claude 正在做什么
+        server.update(pid, busy=f"Claude {label}", progress=0.0, error="")
+        try:
+            globals()["cmd_" + a.cmd](a)
+        except BaseException as e:
+            server.update(pid, error=str(e)[:300])
+            raise
+        finally:
+            server.update(pid, busy="", progress=1.0)
+    else:
+        globals()["cmd_" + a.cmd](a)
 
 
 if __name__ == "__main__":

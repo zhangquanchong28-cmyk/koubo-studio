@@ -13,6 +13,18 @@ description: 口播剪辑技能。用户发来口播视频（或压缩代理分�
 按 CLAUDE.md「云端环境准备」装好；命令统一用 `.venv/bin/python koubo.py …`（下文简写 `kb`）。
 遇到 Python 证书错误先 `export SSL_CERT_FILE=/root/.ccr/ca-bundle.crt`。
 
+### 打开观看模式（每个会话开工先做）
+用户想在 App 右侧预览窗里看着你操作。环境装好后，后台启动工作台并上报端口：
+```bash
+SSL_CERT_FILE=/root/.ccr/ca-bundle.crt KOUBO_HOST=0.0.0.0 KOUBO_PORT=8765 KOUBO_FOLLOW=1 KOUBO_NO_BROWSER=1 \
+  .venv/bin/python server.py      # 用 Bash 的 run_in_background 跑
+```
+然后调用 report_preview_port（port 8765，name「口播工作台」）。
+- 页面会自动跟随你正在操作的项目；`kb` 的每一步（转写、出方案、改方案、配图、出片）都会实时显示进度和日志，
+  你改 plan.json 后跑 `kb check`，页面几秒内自动刷新。
+- 用户也可以直接在页面里改方案、点出片、上传配图；改完你用 `kb show` 看到的就是最新方案。
+- 用户可以试试直接把原片拖进页面上传（不受聊天 30MB 限制的可能性较大，但未验证；不行就走压缩代理）。
+
 ## 1. 收视频
 - 网页上传单文件上限 30MB。用户原片大（一般 3GB 以内、5 分钟以内）时，让用户在本地把原片拖到
   **`压缩代理.bat`** 上，得到 `xxx_上传版.mp4`（或 `_第1段/_第2段…`），按顺序发给你。
