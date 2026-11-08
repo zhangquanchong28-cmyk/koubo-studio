@@ -56,6 +56,74 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);co
 dialog label{display:block;margin:10px 0 4px;color:var(--sub)}
 dialog input,dialog select{width:100%}
 .legend span{margin-right:12px}
+/* 时间线编辑器 */
+.vtab{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:8px;vertical-align:middle}
+.vtab button{border:0;border-radius:0;padding:4px 12px;font-size:13px}
+.vtab button.on{background:var(--brand);color:#fff}
+.tl-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.tl-bar .tl-play{width:44px;font-size:16px}
+.mono{font-variant-numeric:tabular-nums}
+.tl-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
+@media (max-width:900px){.tl-main{grid-template-columns:1fr}}
+.tl-stage-wrap{display:flex;flex-direction:column;align-items:center}
+.tl-stage{position:relative;height:min(58vh,560px);max-width:100%;aspect-ratio:9/16;background:#000;overflow:hidden;border-radius:8px;--S:16px}
+.tl-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:50% 35%}
+.ov{position:absolute;left:0;right:0;pointer-events:none;text-align:center}
+.ov-sub{bottom:var(--sub-b);padding:0 6%}
+.ov-sub span{font-size:var(--S);font-weight:700;color:#fff;-webkit-text-stroke:calc(var(--S)/18) #000;paint-order:stroke fill;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+.ov-sub b{display:inline-block;animation:kwpop .25s ease-out}
+.ov-title{top:var(--title-t)}
+.ov-title span{display:inline-block;font-size:calc(var(--S)*1.1);font-weight:700;color:#fff;background:rgba(0,0,0,.47);padding:calc(var(--S)*.2) calc(var(--S)*.35)}
+.ov-pop{top:var(--pop-t)}
+.ov-pop .big{display:inline-block;font-size:calc(var(--S)*2.1);font-weight:800;-webkit-text-stroke:calc(var(--S)/9) #000;paint-order:stroke fill}
+.ov-pop .pop{animation:bigpop .3s ease-out}
+.ov-pop .card3d{display:inline-block;font-size:calc(var(--S)*1.7);font-weight:800;padding:calc(var(--S)*.35) calc(var(--S)*.65);border-radius:calc(var(--S)*.5);
+  box-shadow:calc(var(--S)*.15) calc(var(--S)*.18) calc(var(--S)*.4) rgba(0,0,0,.45);transform:perspective(600px) rotateY(-10deg) rotateX(4deg);animation:flip .4s ease-out}
+.ov-broll{display:none;right:auto}
+.ov-broll.on{display:block;animation:fadein .2s}
+.ov-broll img{width:100%;height:100%;object-fit:cover;display:block;animation:kb 3s linear forwards}
+.ov-broll.pip,.ov-broll.corner{border:3px solid #fff;box-sizing:border-box;overflow:hidden}
+.ov-broll.full{overflow:hidden}
+.ov-broll .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(40,40,40,.85);color:#ddd;font-size:calc(var(--S)*.6);border:2px dashed #888;box-sizing:border-box;padding:8px}
+@keyframes kwpop{0%{transform:scale(1)}45%{transform:scale(1.28)}100%{transform:scale(1.12)}}
+@keyframes bigpop{0%{transform:scale(.35)}55%{transform:scale(1.18)}100%{transform:scale(1)}}
+@keyframes flip{0%{transform:perspective(600px) rotateY(-80deg) scale(.8)}60%{transform:perspective(600px) rotateY(6deg) scale(1.06)}100%{transform:perspective(600px) rotateY(-10deg) rotateX(4deg)}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes kb{from{transform:scale(1.12) translateX(-4%)}to{transform:scale(1.12) translateX(4%)}}
+.tl-hint{font-size:12px;margin:6px 0 0;text-align:center}
+.tl-props{border:1px solid var(--line);border-radius:10px;padding:12px;font-size:14px;background:var(--card)}
+.tl-props h3{margin:0 0 8px;font-size:15px}
+.tl-props label{display:block;margin:6px 0}
+.tl-props .row label{display:inline-block;margin:6px 10px 6px 0}
+.tl-props input:not([type=checkbox]),.tl-props select{max-width:100%}
+.tl-props input.pp-kw,.tl-props input.pp-bdesc{width:100%;box-sizing:border-box}
+.tl-props .pp-img{width:100%;max-height:150px;object-fit:cover;border-radius:6px}
+.tl-text{background:var(--chip);padding:8px;border-radius:6px;margin:0 0 6px}
+.tl-text.off{text-decoration:line-through;color:var(--del)}
+.tl-scroll{overflow-x:auto;overflow-y:hidden;border:1px solid var(--line);border-radius:10px;margin-top:14px;background:var(--bg);user-select:none}
+.tl-inner{position:relative;min-width:100%;padding-left:0}
+.tl-ruler{position:relative;height:22px;border-bottom:1px solid var(--line);cursor:pointer}
+.tl-ruler i{position:absolute;top:3px;font-style:normal;font-size:11px;color:var(--muted);border-left:1px solid var(--line);padding-left:3px}
+.tl-track{position:relative;height:40px;border-bottom:1px solid var(--line)}
+.tl-track[data-k=talk]{height:52px}
+.tl-lab{position:sticky;left:0;z-index:3;display:inline-block;font-size:11px;background:var(--card);opacity:.85;pointer-events:none;color:var(--muted);padding:2px 6px;border-radius:0 0 6px 0}
+.tl-head{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:#e5484d;z-index:5;pointer-events:none}
+.blk{position:absolute;top:16px;height:32px;background:#3b82f6;color:#fff;border-radius:5px;font-size:12px;overflow:hidden;cursor:pointer;box-sizing:border-box}
+.blk span{display:block;padding:7px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.blk.off{background:repeating-linear-gradient(45deg,#9aa3ad55 0 6px,#9aa3ad22 6px 12px);color:var(--del);text-decoration:line-through}
+.blk.filler{opacity:.6}
+.blk.sel{outline:2px solid #f5a623;outline-offset:1px;z-index:2}
+.blk.hook{box-shadow:inset 0 -3px 0 #f5a623}
+.blk.trimmed{background:#2563eb}
+.blk .h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:rgba(255,255,255,.35);z-index:2}
+.blk .h-l{left:0}.blk .h-r{right:0}
+.zm{position:absolute;top:30px;height:6px;background:#a78bfa;border-radius:3px}
+.chip{position:absolute;top:8px;font-size:11px;white-space:nowrap;padding:1px 6px;border:1.5px solid;border-radius:10px;background:var(--card);cursor:pointer;transform:translateX(-2px)}
+.chip.big{font-weight:700}
+.brb{position:absolute;top:6px;height:30px;border-radius:5px;background:#10b981 center/cover;cursor:pointer;overflow:hidden;box-sizing:border-box;border:2px solid #10b981}
+.brb.empty{background:repeating-linear-gradient(45deg,#10b98155 0 6px,#10b98122 6px 12px)}
+.brb span{font-size:10px;background:rgba(0,0,0,.55);color:#fff;padding:0 4px;border-radius:0 0 4px 0}
+.sfx{position:absolute;top:12px;font-size:11px;color:#f97316;white-space:nowrap;cursor:pointer;transform:translateX(-5px)}
 </style>
 </head>
 <body>
@@ -119,6 +187,7 @@ dialog input,dialog select{width:100%}
   </div>
 </dialog>
 
+<script src="/timeline.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const SFX = {none:"无", whoosh:"转场·刷", hit:"重音·咚", ding:"提示·叮", pop:"弹出·啵", type:"打字", page:"翻页", sparkle:"闪光", tick:"计时"};
@@ -127,6 +196,7 @@ const BIGFX = {"":"—", pop:"弹出", count:"数字滚动", card:"3D卡片"};
 const LAYOUT = {"":"—", pip:"画中画", full:"全屏", corner:"小窗"};
 const BGM = {upbeat:"轻快", chill:"舒缓", hiphop:"节奏感", none:"不要音乐"};
 let cur = null, st = null, dirty = false, timer = null;
+let view = (() => { try { return localStorage.getItem("koubo_view") || "table"; } catch (e) { return "table"; } })();
 
 async function api(path, opt = {}) {
   const r = await fetch(path, opt);
@@ -231,7 +301,7 @@ function render() {
       <button class="primary" onclick="makePlan()" data-busy>${plan ? "重新生成方案" : "AI 生成方案"}</button></div>
       ${plan ? `<p class="muted" style="margin:8px 0 0">💡 ${esc(plan.notes || "")}${plan.usage ? ` <span class="tag">本次约 $${plan.usage.usd}</span>` : ""}</p>` : ""}</div>`;
   }
-  if (t && plan) h += chatBox() + planEditor(t, plan);
+  if (t && plan) h += chatBox() + (view === "timeline" ? timelineCard() : planEditor(t, plan));
   if (st.result) {
     const v = Date.now();
     h += `<div class="card"><h2>③ 成片（${Math.round(st.result.duration)} 秒）</h2>
@@ -252,7 +322,11 @@ function render() {
   if (st.concat) h += `<div class="card"><h2>Concat 工程（实验）</h2><p style="margin:0">用 Concat 打开这个文件夹继续精修：</p>
       <p class="muted" style="margin:6px 0 0;word-break:break-all">${esc(st.concat.path)}</p>
       <p class="muted" style="margin:6px 0 0">开头钩子没有带过去，需要的话在 Concat 里手动把那一句复制到最前面。</p></div>`;
+  if (window.Timeline) Timeline.destroy();
   m.innerHTML = h;
+  if (t && plan && view === "timeline" && window.Timeline) Timeline.mount($("#tl"), {pid: cur, transcript: t, plan,
+    onDirty: () => { dirty = true; const b = $("#saveBtn"); if (b) b.textContent = "保存方案 *"; },
+    SFX, COLORS, BIGFX, LAYOUT, BGM});
   renderStatus();
 }
 
@@ -262,6 +336,26 @@ function hl(text, e) {
   return s;
 }
 
+function viewTabs() {
+  return `<span class="vtab"><button class="${view === "table" ? "on" : ""}" onclick="setView('table')">表格</button><button class="${view === "timeline" ? "on" : ""}" onclick="setView('timeline')">时间线</button></span>`;
+}
+async function setView(v) {
+  if (v === view) return;
+  if (dirty) await savePlan();          // 切换前先把当前视图的修改存下来
+  view = v;
+  try { localStorage.setItem("koubo_view", v); } catch (e) {}
+  render();
+}
+function timelineCard() {
+  return `<div class="card"><h2>② 调整方案 ${viewTabs()} <span class="muted" style="font-weight:400">— 双击句子删除/恢复，拖两头微调，点一句在右边改包装</span></h2>
+    <div class="row" style="margin-bottom:10px">
+      <span class="sp" style="flex:1"></span>
+      <button id="saveBtn" onclick="savePlan()" data-busy>保存方案</button>
+      <button onclick="doBroll()" data-busy>🖼 准备配图</button>
+      <button onclick="doJianying()" data-busy>导出剪映草稿</button>
+      <button class="primary" onclick="doRender()" data-busy>🎬 出片</button></div>
+    <div id="tl"></div></div>`;
+}
 function planEditor(t, plan) {
   const emph = Object.fromEntries((plan.emphasis || []).map(e => [e.id, e]));
   const brs = Object.fromEntries((plan.broll || []).map(b => [b.id, b]));
@@ -281,7 +375,7 @@ function planEditor(t, plan) {
       <td><input type="radio" name="hook" class="hook" ${plan.hook === p.id ? "checked" : ""} onchange="edit()"></td>
       ${brollCell(p, brs[p.id])}</tr>`;
   }).join("");
-  return `<div class="card"><h2>② 调整方案 <span class="muted" style="font-weight:400">— 取消勾选=删掉这句；重点词会变色弹跳；「大字」=画面中上方弹出（弹出 / 数字滚动 / 3D卡片）；「推近」=镜头推进；「配图」=这句画面上叠一张图，人声继续</span></h2>
+  return `<div class="card"><h2>② 调整方案 ${viewTabs()} <span class="muted" style="font-weight:400">— 取消勾选=删掉这句；重点词会变色弹跳；「大字」=画面中上方弹出（弹出 / 数字滚动 / 3D卡片）；「推近」=镜头推进；「配图」=这句画面上叠一张图，人声继续</span></h2>
     <div class="row" style="margin-bottom:10px">
       <label>顶部标题 <input id="title" value="${esc(plan.title || "")}" maxlength="20" oninput="edit()" style="width:220px"></label>
       <label>BGM <select id="bgm" onchange="edit()">${Object.entries(BGM).map(([k, v]) => `<option value="${k}" ${plan.bgm === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
@@ -297,7 +391,7 @@ function planEditor(t, plan) {
 }
 
 function collect() {
-  const plan = {title: $("#title").value, bgm: $("#bgm").value, delete: [], emphasis: [], hook: null, notes: st.plan.notes || ""};
+  const plan = {title: $("#title").value, bgm: $("#bgm").value, delete: [], emphasis: [], hook: null, notes: st.plan.notes || "", trim: st.plan.trim || {}};
   document.querySelectorAll("tbody tr").forEach(tr => {
     const id = +tr.dataset.id;
     if (!tr.querySelector(".keep").checked) plan.delete.push(id);
@@ -324,7 +418,8 @@ function edit() {
 }
 function clearHook() { document.querySelectorAll(".hook").forEach(r => r.checked = false); edit(); }
 async function savePlan() {
-  try { const j = await post(`/api/p/${cur}/save`, {plan: collect()}); dirty = false; st.plan = j.plan; render(); } catch (e) { alert(e.message); }
+  const plan = view === "timeline" && window.Timeline && Timeline.active() ? Timeline.getPlan() : collect();
+  try { const j = await post(`/api/p/${cur}/save`, {plan}); dirty = false; st.plan = j.plan; render(); } catch (e) { alert(e.message); }
 }
 function brollCell(p, b) {
   b = b || {};

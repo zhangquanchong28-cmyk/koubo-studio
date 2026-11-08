@@ -84,12 +84,25 @@ def build_timeline(data, plan):
     emph = {e["id"]: e for e in plan.get("emphasis", [])}
     keep = [i for i, p in enumerate(phrases) if p["id"] not in delete and not p.get("filler")]
 
+    trims = plan.get("trim") or {}
+    gone = {p["id"] for p in phrases if p["id"] in delete or p.get("filler")}
+
     def span(i):
         p = phrases[i]
-        lo = phrases[i - 1]["end"] if i > 0 else 0.0
-        hi = phrases[i + 1]["start"] if i + 1 < len(phrases) else duration
-        s = max(lo, p["start"] - PAD_IN, 0.0)
-        e = min(hi, p["end"] + PAD_OUT, duration)
+        ds, de = trims.get(str(p["id"]), (0.0, 0.0))
+        # 相邻句被删掉时，允许把入出点拖进它的范围（用户在时间线上手动微调）
+        if i == 0:
+            lo = 0.0
+        else:
+            q = phrases[i - 1]
+            lo = (q["start"] if q["id"] in gone else q["end"]) if (ds or de) else q["end"]
+        if i + 1 >= len(phrases):
+            hi = duration
+        else:
+            q = phrases[i + 1]
+            hi = (q["end"] if q["id"] in gone else q["start"]) if (ds or de) else q["start"]
+        s = max(lo, p["start"] - PAD_IN + ds, 0.0)
+        e = min(hi, p["end"] + PAD_OUT + de, duration)
         return s, e
 
     ranges = []

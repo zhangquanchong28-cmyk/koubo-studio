@@ -276,6 +276,15 @@ def sanitize(raw, data):
             "source": str(b.get("source") or "")[:10],
             "credit": str(b.get("credit") or "")[:60],
         })
+    trim = {}
+    for k, v in (raw.get("trim") or {}).items():   # 时间线上手动微调的入出点（秒），每头最多 ±3 秒
+        pid = _int(k)
+        try:
+            ds, de = (max(-3.0, min(3.0, round(float(x), 3))) for x in v)
+        except (TypeError, ValueError):
+            continue
+        if pid in by_id and (ds or de):
+            trim[str(pid)] = [ds, de]
     for e in emph:                       # 配图的句子不再弹大字，避免画面打架
         if e["id"] in bseen:
             e["big"] = False
@@ -284,6 +293,7 @@ def sanitize(raw, data):
         "hook": hook, "delete": delete,
         "emphasis": sorted(emph, key=lambda x: x["id"]),
         "broll": sorted(broll, key=lambda x: x["id"]),
+        "trim": trim,
         "bgm": raw.get("bgm") if raw.get("bgm") in BGM_KINDS else "upbeat",
         "notes": str(raw.get("notes") or ""),
     }

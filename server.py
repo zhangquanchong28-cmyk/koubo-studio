@@ -22,6 +22,11 @@ import broll  # noqa: E402
 import packer  # noqa: E402
 import planner  # noqa: E402
 
+# Windows 注册表里的类型映射经常不对（.js 变成 text/plain），这里固定
+for _t, _e in (("text/javascript", ".js"), ("text/html", ".html"), ("video/mp4", ".mp4"),
+               ("video/quicktime", ".mov"), ("image/webp", ".webp"), ("text/plain", ".srt")):
+    mimetypes.add_type(_t, _e)
+
 PROJECTS = APP / "projects"
 CONFIG = APP / "config.json"
 DEFAULT_CFG = {"provider": "openrouter", "api_key": "", "model": "", "effort": "medium",
@@ -333,6 +338,8 @@ class H(BaseHTTPRequestHandler):
             parts = [unquote(x) for x in u.path.strip("/").split("/") if x]
             if not parts:
                 return self._file(APP / "ui.html")
+            if parts == ["timeline.js"]:
+                return self._file(APP / "timeline.js")
             if parts == ["api", "config"]:
                 cfg = load_cfg()
                 cfg["has_key"] = bool(cfg.get("api_key"))
