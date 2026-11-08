@@ -1,0 +1,5 @@
+faster-whisper>=1.1,<2
+av>=14,<16
+anthropic>=2.6,<3
+pyJianYingDraft>=0.3.1,<0.4
+opencc-python-reimplemented>=0.1.7,<0.2

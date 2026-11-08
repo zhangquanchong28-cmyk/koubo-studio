@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>口播工作台</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1d2129;--sub:#6b7280;--line:#e5e7eb;--brand:#2563eb;--brand-ink:#fff;
+--yellow:#f5b800;--red:#e5484d;--blue:#3b82f6;--ok:#16a34a;--del:#9ca3af;--chip:#eef2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--ink:#e6e8ec;--sub:#9aa3b2;--line:#2a2f3a;
+--brand:#4f8cff;--chip:#1f2a44;--del:#5b6270}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"Microsoft YaHei","PingFang SC",sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
+header h1{font-size:17px;margin:0}
+header .sp{flex:1}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+.wrap{display:grid;grid-template-columns:240px 1fr;min-height:calc(100vh - 53px)}
+aside{border-right:1px solid var(--line);padding:14px;background:var(--card)}
+aside .proj{padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:4px;word-break:break-all}
+aside .proj.on{background:var(--chip)}
+aside .proj small{display:block;color:var(--sub)}
+main{padding:18px 22px;max-width:1200px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--sub);margin-bottom:12px}
+.drop.hot{border-color:var(--brand);color:var(--brand)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 10px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;background:var(--brand);width:0}
+.log{font:12px/1.6 Consolas,monospace;color:var(--sub);max-height:120px;overflow:auto;white-space:pre-wrap}
+.err{color:var(--red)}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+th{font-weight:600;color:var(--sub);font-size:12px;background:var(--card);white-space:nowrap}
+tr.deleted td.txt{color:var(--del);text-decoration:line-through}
+tr.filler td.txt{color:var(--del)}
+td.txt{min-width:260px}
+td.br{min-width:150px}
+td.br img{display:block;width:120px;height:80px;object-fit:cover;border-radius:6px;margin:6px 0 4px;cursor:zoom-in;background:var(--chip)}
+td.br .bd{width:140px;font-size:12px;margin-top:4px}
+td.br .mini{font-size:12px;padding:2px 6px;margin:2px 2px 0 0}
+td.br small{display:block;color:var(--muted);font-size:11px}
+mark{background:none;font-weight:700}
+mark.yellow{color:var(--yellow)} mark.red{color:var(--red)} mark.blue{color:var(--blue)}
+td input.kw{width:130px}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:10px;background:var(--chip);color:var(--brand);margin-left:4px}
+video{width:100%;max-height:70vh;background:#000;border-radius:8px}
+.muted{color:var(--sub)}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);width:min(520px,92vw);max-height:90vh;overflow:auto}
+dialog label{display:block;margin:10px 0 4px;color:var(--sub)}
+dialog input,dialog select{width:100%}
+.legend span{margin-right:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 口播工作台</h1>
+  <span class="muted" id="keyhint"></span>
+  <span class="sp"></span>
+  <button onclick="openCfg()">⚙ 设置</button>
+</header>
+<div class="wrap">
+  <aside>
+    <div class="drop" id="drop">把口播视频拖到这里<br><small>或</small><br>
+      <input type="file" id="file" accept="video/*" style="max-width:100%"></div>
+    <div class="row" style="margin-bottom:12px">
+      <input id="path" placeholder="或粘贴视频完整路径（不复制，适合大文件）" style="flex:1;min-width:0">
+      <button onclick="openPath()">打开</button>
+    </div>
+    <details style="margin-bottom:12px"><summary class="muted" style="cursor:pointer">☁ 导入云端方案包（用原片出高清）</summary>
+      <input id="imp_video" placeholder="原片完整路径，如 D:\拍摄\0108.mp4" style="width:100%;margin-top:6px">
+      <input id="imp_pack" placeholder="云端方案包.zip 完整路径" style="width:100%;margin-top:6px">
+      <button onclick="importPack()" style="margin-top:6px">导入</button></details>
+    <div id="projects"></div>
+  </aside>
+  <main id="main"><p class="muted">先在左边导入一个口播视频。第一次使用请点右上角「设置」填写 API Key。</p></main>
+</div>
+
+<dialog id="cfg">
+  <h2 style="margin-top:0">设置</h2>
+  <label>AI 服务商</label>
+  <select id="c_provider"><option value="openrouter">OpenRouter</option><option value="anthropic">Anthropic 官方</option></select>
+  <label>API Key（只保存在本机 config.json）</label>
+  <input id="c_api_key" type="password" placeholder="sk-or-… 或 sk-ant-…">
+  <label>模型（留空 = Opus 5.5）</label>
+  <input id="c_model" placeholder="anthropic/claude-opus-5.5">
+  <label>思考深度</label>
+  <select id="c_effort"><option>low</option><option selected>medium</option><option>high</option></select>
+  <label>字幕字体（填电脑里装好的字体名）</label>
+  <input id="c_font">
+  <label>语音识别模型</label>
+  <select id="c_whisper_model"><option>small</option><option>medium</option><option>large-v3</option></select>
+  <label>识别设备</label>
+  <select id="c_device"><option value="cpu">CPU</option><option value="cuda">NVIDIA 显卡 (CUDA)</option></select>
+  <label>BGM 音量（0.05～0.2）</label>
+  <input id="c_bgm_vol" type="number" step="0.01" min="0" max="0.5">
+  <label>配图来源</label>
+  <select id="c_broll_source"><option value="auto">自动：先免费图库，搜不到再 AI 生成</option><option value="ai">只用 AI 生成</option><option value="stock">只用免费图库</option></select>
+  <label>每次最多 AI 生图张数（约 $0.03～0.07 / 张）</label>
+  <input id="c_max_ai_images" type="number" min="0" max="50">
+  <label>AI 生图模型（留空 = google/gemini-3.1-flash-lite-image，便宜）</label>
+  <input id="c_image_model" placeholder="google/gemini-3.1-flash-lite-image">
+  <label>Pexels Key（可选，免费：pexels.com/api 注册即得）</label>
+  <input id="c_pexels_key" autocomplete="off">
+  <label>Pixabay Key（可选，免费：pixabay.com/api/docs 登录后可见）</label>
+  <input id="c_pixabay_key" autocomplete="off">
+  <label>剪映草稿位置（留空=自动找；在剪映「全局设置-草稿位置」可查看）</label>
+  <input id="c_jianying_root" placeholder="例如 D:\JianyingPro Drafts">
+  <label>Concat 程序路径（实验功能，留空=自动找）</label>
+  <input id="c_concat_path" placeholder="例如 C:\Program Files\Concat\concat.exe">
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <button onclick="cfg.close()">取消</button><button class="primary" onclick="saveCfg()">保存</button>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const SFX = {none:"无", whoosh:"转场·刷", hit:"重音·咚", ding:"提示·叮", pop:"弹出·啵", type:"打字", page:"翻页", sparkle:"闪光", tick:"计时"};
+const COLORS = {yellow:"黄", red:"红", blue:"蓝"};
+const BIGFX = {"":"—", pop:"弹出", count:"数字滚动", card:"3D卡片"};
+const LAYOUT = {"":"—", pip:"画中画", full:"全屏", corner:"小窗"};
+const BGM = {upbeat:"轻快", chill:"舒缓", hiphop:"节奏感", none:"不要音乐"};
+let cur = null, st = null, dirty = false, timer = null;
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const post = (p, body) => api(p, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+
+async function loadCfg() {
+  const c = await api("/api/config");
+  for (const k of ["provider","api_key","model","effort","font","whisper_model","device","bgm_vol","jianying_root","concat_path","broll_source","max_ai_images","image_model","pexels_key","pixabay_key"]) { const el = $("#c_" + k); if (el) el.value = c[k] ?? ""; }
+  $("#keyhint").textContent = c.has_key ? `AI：${c.provider === "openrouter" ? "OpenRouter" : "Anthropic"} · ${c.model || "Opus 5.5"}` : "未填 API Key（将使用本地规则方案）";
+}
+function openCfg() { loadCfg(); cfg.showModal(); }
+async function saveCfg() {
+  const b = {};
+  for (const k of ["provider","api_key","model","effort","font","whisper_model","device","jianying_root","concat_path","broll_source","image_model","pexels_key","pixabay_key"]) b[k] = $("#c_" + k).value;
+  b.bgm_vol = parseFloat($("#c_bgm_vol").value) || 0.1;
+  b.max_ai_images = parseInt($("#c_max_ai_images").value || "10", 10);
+  await post("/api/config", b); cfg.close(); loadCfg();
+}
+
+async function loadProjects() {
+  const list = await api("/api/projects");
+  $("#projects").innerHTML = list.map(p => `<div class="proj ${p.id === cur ? "on" : ""}" onclick="selectProject('${p.id}')">
+    ${esc(p.name)}<small>${p.busy ? "⏳ " + p.busy : ({new:"新建",transcribed:"已转写",planned:"已有方案",rendered:"✅ 已出片"})[p.stage] || ""}</small></div>`).join("") || '<p class="muted">还没有项目</p>';
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]); }
+
+async function upload(file) {
+  $("#main").innerHTML = `<div class="card"><h2>正在导入 ${esc(file.name)}</h2><div class="bar"><i id="up" ></i></div></div>`;
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
+  xhr.upload.onprogress = e => { if (e.lengthComputable) $("#up").style.width = (e.loaded / e.total * 100) + "%"; };
+  xhr.onload = () => { const j = JSON.parse(xhr.responseText); if (j.id) selectProject(j.id); else alert(j.error); loadProjects(); };
+  xhr.send(file);
+}
+async function openPath() {
+  const path = $("#path").value.trim(); if (!path) return;
+  try { const j = await post("/api/open", {path}); $("#path").value = ""; selectProject(j.id); loadProjects(); } catch (e) { alert(e.message); }
+}
+async function importPack() {
+  const video = $("#imp_video").value.trim(), pack = $("#imp_pack").value.trim();
+  if (!video || !pack) return alert("原片路径和方案包路径都要填");
+  try { const j = await post("/api/import", {video, pack}); $("#imp_pack").value = ""; selectProject(j.id); loadProjects(); } catch (e) { alert(e.message); }
+}
+const drop = $("#drop");
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("hot"); };
+drop.ondragleave = () => drop.classList.remove("hot");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("hot"); if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); };
+$("#file").onchange = e => e.target.files[0] && upload(e.target.files[0]);
+
+async function selectProject(id) {
+  if (dirty && cur !== id && !confirm("方案有修改还没保存，确定切换？")) return;
+  cur = id; dirty = false; st = null; await refresh(true); loadProjects();
+}
+async function refresh(full) {
+  if (!cur) return;
+  const s = await api("/api/p/" + cur);
+  const wasBusy = st && st.busy;
+  const first = !st;
+  st = s;
+  if (full || first || (wasBusy && !s.busy)) render(); else renderStatus();
+  clearTimeout(timer);
+  if (s.busy) timer = setTimeout(() => refresh(false), 1200);
+  if (wasBusy && !s.busy) loadProjects();
+}
+
+function renderStatus() {
+  const box = $("#status"); if (!box) return;
+  box.innerHTML = `${st.busy ? `<b>⏳ ${esc(st.busy)}中…</b>` : ""}
+    <div class="bar"><i style="width:${Math.round((st.progress || 0) * 100)}%"></i></div>
+    ${st.error ? `<div class="err">❌ ${esc(st.error)}</div>` : ""}
+    <div class="log">${esc((st.log || []).slice(-12).join("\n"))}</div>`;
+  const lg = box.querySelector(".log"); lg.scrollTop = lg.scrollHeight;
+  document.querySelectorAll("[data-busy]").forEach(b => b.disabled = !!st.busy);
+}
+
+function render() {
+  const m = $("#main");
+  const t = st.transcript, plan = st.plan;
+  let h = `<div class="card"><h2>${esc(st.name)}</h2><div id="status"></div>
+    <div class="row" style="margin-top:8px"><button onclick="delProject()" data-busy>删除项目</button>
+    ${!t ? '<button onclick="act(\'transcribe\')" data-busy>重新转写</button>' : ""}</div></div>`;
+  if (t) {
+    h += `<div class="card"><h2>① AI 剪辑方案</h2>
+      <div class="row"><input id="notes" style="flex:1;min-width:260px" placeholder="可选：告诉 AI 要求，如「财经类，控制在60秒内，节奏快」">
+      <button class="primary" onclick="makePlan()" data-busy>${plan ? "重新生成方案" : "AI 生成方案"}</button></div>
+      ${plan ? `<p class="muted" style="margin:8px 0 0">💡 ${esc(plan.notes || "")}${plan.usage ? ` <span class="tag">本次约 $${plan.usage.usd}</span>` : ""}</p>` : ""}</div>`;
+  }
+  if (t && plan) h += planEditor(t, plan);
+  if (st.result) {
+    const v = Date.now();
+    h += `<div class="card"><h2>③ 成片（${Math.round(st.result.duration)} 秒）</h2>
+      <video controls src="/api/p/${cur}/file/成片.mp4?v=${v}"></video>
+      <div class="row" style="margin-top:10px">
+        <a href="/api/p/${cur}/file/成片.mp4?dl=1"><button class="primary">下载成片 mp4</button></a>
+        <a href="/api/p/${cur}/file/字幕.srt?dl=1"><button>下载字幕 srt（可导入剪映）</button></a>
+        <a href="/api/p/${cur}/file/方案.json?dl=1"><button>下载方案</button></a></div></div>`;
+  }
+  if (st.jianying) {
+    const j = st.jianying;
+    h += `<div class="card"><h2>剪映草稿</h2><p style="margin:0">${j.installed
+      ? `✅ 已装进剪映：打开剪映，在草稿列表里找「${esc(j.name)}」（没看到就重启剪映）。`
+      : `草稿已生成，但没有自动装进剪映（没找到剪映草稿目录）。可以在设置里填「剪映草稿位置」后再导一次，或手动把这个文件夹复制进草稿目录：`}</p>
+      <p class="muted" style="margin:6px 0 0;word-break:break-all">${esc(j.path)}</p>
+      <p class="muted" style="margin:6px 0 0">导出前要先完全退出剪映。剪映打开过的草稿会被加密，想重来就再点一次「导出剪映草稿」覆盖。</p></div>`;
+  }
+  if (st.concat) h += `<div class="card"><h2>Concat 工程（实验）</h2><p style="margin:0">用 Concat 打开这个文件夹继续精修：</p>
+      <p class="muted" style="margin:6px 0 0;word-break:break-all">${esc(st.concat.path)}</p>
+      <p class="muted" style="margin:6px 0 0">开头钩子没有带过去，需要的话在 Concat 里手动把那一句复制到最前面。</p></div>`;
+  m.innerHTML = h;
+  renderStatus();
+}
+
+function hl(text, e) {
+  let s = esc(text);
+  if (e) for (const k of e.keywords || []) if (k) s = s.replace(esc(k), `<mark class="${e.color}">${esc(k)}</mark>`);
+  return s;
+}
+
+function planEditor(t, plan) {
+  const emph = Object.fromEntries((plan.emphasis || []).map(e => [e.id, e]));
+  const brs = Object.fromEntries((plan.broll || []).map(b => [b.id, b]));
+  const del = new Set(plan.delete || []);
+  const rows = t.phrases.map(p => {
+    const e = emph[p.id] || {keywords: [], color: "yellow", big: false, zoom: false, sfx: "none"};
+    const isDel = del.has(p.id) || p.filler;
+    return `<tr data-id="${p.id}" class="${isDel ? "deleted" : ""} ${p.filler ? "filler" : ""}">
+      <td><input type="checkbox" class="keep" ${isDel ? "" : "checked"} ${p.filler ? "disabled" : ""} onchange="edit()"></td>
+      <td class="muted">${p.id}<br><small>${p.start.toFixed(1)}s</small></td>
+      <td class="txt">${hl(p.text, emph[p.id])}${p.filler ? '<span class="tag">语气词</span>' : ""}${plan.hook === p.id ? '<span class="tag">开头钩子</span>' : ""}</td>
+      <td><input class="kw" value="${esc((e.keywords || []).join("，"))}" placeholder="重点词，逗号分隔" oninput="edit()"></td>
+      <td><select class="color" onchange="edit()">${Object.entries(COLORS).map(([k, v]) => `<option value="${k}" ${e.color === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
+      <td><select class="big" onchange="edit()">${Object.entries(BIGFX).map(([k, v]) => `<option value="${k}" ${(e.big ? (e.effect || "pop") : "") === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
+      <td><input type="checkbox" class="zoom" ${e.zoom ? "checked" : ""} onchange="edit()"></td>
+      <td><select class="sfx" onchange="edit()">${Object.entries(SFX).map(([k, v]) => `<option value="${k}" ${e.sfx === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
+      <td><input type="radio" name="hook" class="hook" ${plan.hook === p.id ? "checked" : ""} onchange="edit()"></td>
+      ${brollCell(p, brs[p.id])}</tr>`;
+  }).join("");
+  return `<div class="card"><h2>② 调整方案 <span class="muted" style="font-weight:400">— 取消勾选=删掉这句；重点词会变色弹跳；「大字」=画面中上方弹出（弹出 / 数字滚动 / 3D卡片）；「推近」=镜头推进；「配图」=这句画面上叠一张图，人声继续</span></h2>
+    <div class="row" style="margin-bottom:10px">
+      <label>顶部标题 <input id="title" value="${esc(plan.title || "")}" maxlength="20" oninput="edit()" style="width:220px"></label>
+      <label>BGM <select id="bgm" onchange="edit()">${Object.entries(BGM).map(([k, v]) => `<option value="${k}" ${plan.bgm === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      <button onclick="clearHook()">取消开头钩子</button>
+      <span class="sp" style="flex:1"></span>
+      <button id="saveBtn" onclick="savePlan()" data-busy>保存方案</button>
+      <button onclick="doBroll()" data-busy title="给所有选了配图的句子找图：有图库 Key 先搜免费图库，没有就 AI 生成">🖼 准备配图</button>
+      <button onclick="doJianying()" data-busy title="生成剪映工程：每句一段、字幕、大字、音效分轨，可在剪映里继续精修">导出剪映草稿</button>
+      <button onclick="doConcat()" data-busy title="实验功能：在开源剪辑器 Concat 里搭好工程">导出到 Concat（实验）</button>
+      <button class="primary" onclick="doRender()" data-busy>🎬 出片</button></div>
+    <div style="overflow:auto"><table><thead><tr><th>保留</th><th>#</th><th>文案</th><th>重点词</th><th>颜色</th><th>大字</th><th>推近</th><th>音效</th><th>钩子</th><th>配图</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+
+function collect() {
+  const plan = {title: $("#title").value, bgm: $("#bgm").value, delete: [], emphasis: [], hook: null, notes: st.plan.notes || ""};
+  document.querySelectorAll("tbody tr").forEach(tr => {
+    const id = +tr.dataset.id;
+    if (!tr.querySelector(".keep").checked) plan.delete.push(id);
+    if (tr.querySelector(".hook").checked) plan.hook = id;
+    const kws = tr.querySelector(".kw").value.split(/[,，、\s]+/).filter(Boolean);
+    const bigv = tr.querySelector(".big").value, big = !!bigv, effect = bigv || "pop", zoom = tr.querySelector(".zoom").checked, sfx = tr.querySelector(".sfx").value;
+    if (kws.length || big || zoom || sfx !== "none") plan.emphasis.push({id, keywords: kws, color: tr.querySelector(".color").value, big, effect, zoom, sfx});
+    const lay = tr.querySelector(".blay").value;
+    if (lay) {
+      const old = (st.plan.broll || []).find(b => b.id === id) || {};
+      const bd = tr.querySelector(".bd");
+      const desc = bd ? bd.value : (old.desc || ((st.transcript.phrases.find(x => x.id === id) || {}).text || ""));
+      const changed = desc !== (old.desc || "");   // 改了描述就按新描述找图
+      plan.broll = plan.broll || [];
+      plan.broll.push({id, layout: lay, desc, query: changed ? "" : old.query || "", prompt: changed ? "" : old.prompt || "",
+                       image: changed ? "" : old.image || "", source: old.source || "", credit: old.credit || ""});
+    }
+  });
+  return plan;
+}
+function edit() {
+  dirty = true; $("#saveBtn").textContent = "保存方案 *";
+  document.querySelectorAll("tbody tr").forEach(tr => tr.classList.toggle("deleted", !tr.querySelector(".keep").checked));
+}
+function clearHook() { document.querySelectorAll(".hook").forEach(r => r.checked = false); edit(); }
+async function savePlan() {
+  try { const j = await post(`/api/p/${cur}/save`, {plan: collect()}); dirty = false; st.plan = j.plan; render(); } catch (e) { alert(e.message); }
+}
+function brollCell(p, b) {
+  b = b || {};
+  const img = b.image ? `<img src="/api/p/${cur}/file/broll:${encodeURIComponent(b.image)}" onclick="window.open(this.src)" title="${esc(b.credit || "")}">` : "";
+  return `<td class="br"><select class="blay" onchange="edit(); if (this.value && !this.closest('td').querySelector('.bd')) savePlan()">${Object.entries(LAYOUT).map(([k, v]) => `<option value="${k}" ${(b.layout || "") === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+    ${b.layout ? `<input class="bd" value="${esc(b.desc || "")}" placeholder="画面描述，如：深夜加班的写字楼" oninput="edit()">
+      ${img}${b.image ? `<small>${esc(b.credit || "")}</small>` : `<small>还没有图</small>`}
+      <button class="mini" onclick="brollOne(${p.id}, null)" data-busy>${b.image ? "换一张" : "找图"}</button><button class="mini" onclick="brollOne(${p.id}, 'ai')" data-busy>AI画</button><button class="mini" onclick="brollUp(${p.id})" data-busy>上传</button>` : ""}</td>`;
+}
+async function doBroll() {
+  try { if (dirty) await savePlan(); await post(`/api/p/${cur}/broll`, {}); refresh(false); } catch (e) { alert(e.message); }
+}
+async function brollOne(id, source) {
+  try { if (dirty) await savePlan(); await post(`/api/p/${cur}/broll`, {ids: [id], force: true, source}); refresh(false); } catch (e) { alert(e.message); }
+}
+function brollUp(id) {
+  const f = document.createElement("input"); f.type = "file"; f.accept = "image/jpeg,image/png,image/webp";
+  f.onchange = async () => {
+    if (!f.files[0]) return;
+    try {
+      if (dirty) await savePlan();
+      const r = await fetch(`/api/p/${cur}/brollup?bid=${id}&name=${encodeURIComponent(f.files[0].name)}`, {method: "POST", body: f.files[0]});
+      const j = await r.json(); if (j.error) throw new Error(j.error);
+      st.plan = j.plan; render();
+    } catch (e) { alert(e.message); }
+  };
+  f.click();
+}
+async function doJianying() {
+  if (dirty) await savePlan();
+  if (!confirm("导出前请先完全退出剪映（任务栏图标右键→退出）。已退出？")) return;
+  try { await post(`/api/p/${cur}/jianying`, {}); refresh(false); } catch (e) { alert(e.message); }
+}
+async function doConcat() {
+  try { if (dirty) await savePlan(); await post(`/api/p/${cur}/concat`, {}); refresh(false); } catch (e) { alert(e.message); }
+}
+async function makePlan() {
+  if (dirty && !confirm("重新生成会覆盖你的修改，继续？")) return;
+  dirty = false;
+  try { await post(`/api/p/${cur}/plan`, {notes: ($("#notes") || {}).value || ""}); refresh(false); } catch (e) { alert(e.message); }
+}
+async function doRender() {
+  try { if (dirty) await savePlan(); await post(`/api/p/${cur}/render`); refresh(false); } catch (e) { alert(e.message); }
+}
+async function act(a) { try { await post(`/api/p/${cur}/${a}`); refresh(false); } catch (e) { alert(e.message); } }
+async function delProject() {
+  if (!confirm("删除这个项目和它的所有文件？（「打开路径」导入的原片不会被删）")) return;
+  await post(`/api/p/${cur}/delete`); cur = null; st = null; $("#main").innerHTML = ""; loadProjects();
+}
+loadCfg(); loadProjects();
+</script>
+</body>
+</html>
