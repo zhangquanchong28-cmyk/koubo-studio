@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import settings as SET
 from asr import keyword_time
 from common import find_tool, fmt_srt
 
@@ -130,26 +131,41 @@ def build_timeline(data, plan):
 
 
 # ---------------------------------------------------------------- 切片
-def render_segments(src, ranges, meta, tmp, log=print, progress=None):
-    W, H, fps = meta["w"], meta["h"], meta["fps"]
+def _atempo(sp):
+    """atempo 单级只支持 0.5～2.0，这里够用；保留函数便于以后扩展。"""
+    return f"atempo={sp:.3f}"
+
+
+def render_segments(src, ranges, meta, tmp, log=print, progress=None, st=None, canvas=None):
+    st = st or SET.normalize({})
+    W, H = canvas or (meta["w"], meta["h"])
+    fps = meta["fps"]
+    sp = st["speed"]
     files, durs = [], []
     for k, r in enumerate(ranges, 1):
         d = r["end"] - r["start"]
         seg = tmp / f"seg{k:04d}.mp4"
-        vf = f"scale={W}:{H},setsar=1"
+        vf = SET.video_filters(meta, st, W, H, "[0:v]", "")
         if r["zoom"]:
             frames = max(1, int(meta["fpsf"] * ZOOM_IN_SEC))
             vf += (f",zoompan=z='min(1+{ZOOM_TO - 1:.3f}*on/{frames},{ZOOM_TO})'"
                    f":x='iw/2-iw/zoom/2':y='(ih-ih/zoom)*0.35':d=1:s={W}x{H}:fps={fps}")
+        if sp != 1:
+            vf += f",setpts=PTS/{sp:.3f}"
+        vf += "[v]"
         fade = min(0.015, d / 4)
         cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
-               "-ss", f"{r['start']:.3f}", "-i", str(src), "-t", f"{d:.3f}",
-               "-map", "0:v:0"]
+               "-ss", f"{r['start']:.3f}", "-t", f"{d:.3f}", "-i", str(src),
+               "-filter_complex", vf, "-map", "[v]"]
         if meta["has_audio"]:
-            cmd += ["-map", "0:a:0", "-af",
-                    f"afade=t=in:d={fade:.3f},afade=t=out:st={d - fade:.3f}:d={fade:.3f}",
+            af = f"afade=t=in:d={fade:.3f},afade=t=out:st={d - fade:.3f}:d={fade:.3f}"
+            if st["audio"]["denoise"]:
+                af = "afftdn=nf=-25," + af
+            if sp != 1:
+                af += "," + _atempo(sp)
+            cmd += ["-map", "0:a:0", "-af", af,
                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
-        cmd += ["-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-r", fps, str(seg)]
         subprocess.run(cmd, check=True)
         files.append(seg)
@@ -185,25 +201,40 @@ def _esc(t):
     return t.replace("{", "（").replace("}", "）").replace("\\", "/")
 
 
+def display_text(p, plan):
+    """字幕上显示的文字：用户/AI 改过错字就用改后的。"""
+    return ((plan.get("text") or {}).get(str(p["id"])) or p["text"])
+
+
+def kw_time(p, kw, plan):
+    """关键词出现的原片时间：原文里有就用逐字时间，改过字的按字数比例估计。"""
+    if kw in p["text"]:
+        return keyword_time(p, kw)
+    t = display_text(p, plan)
+    i = t.find(kw)
+    return p["start"] + (p["end"] - p["start"]) * (max(0, i) / max(1, len(t)))
+
+
 def build_events(ranges, durs, plan):
-    """把方案换算到成片时间：字幕行、大字弹出、音效点。"""
+    """把方案换算到成片时间：字幕行、大字弹出、音效点（已考虑整体变速）。"""
     emph = {e["id"]: e for e in plan.get("emphasis", [])}
+    sp = SET.of(plan)["speed"]
     subs, pops, sfx = [], [], []
     off = 0.0
     used = {}
     for r, real in zip(ranges, durs):
         for p in r["phrases"]:
-            a = off + max(0.0, p["start"] - r["start"])
-            b = min(off + real, off + p["end"] - r["start"] + 0.05)
+            a = off + max(0.0, p["start"] - r["start"]) / sp
+            b = min(off + real, off + (p["end"] - r["start"]) / sp + 0.05)
             if b <= a:
                 continue
             e = emph.get(p["id"])
             kws = []
             if e:
                 for kw in e["keywords"]:
-                    kt = off + max(0.0, keyword_time(p, kw) - r["start"])
+                    kt = off + max(0.0, kw_time(p, kw, plan) - r["start"]) / sp
                     kws.append((kw, min(max(kt, a), b)))
-            subs.append({"a": a, "b": b, "text": p["text"], "kws": kws,
+            subs.append({"a": a, "b": b, "text": display_text(p, plan), "kws": kws,
                          "color": (e or {}).get("color", "yellow")})
             if e and e["big"] and kws:
                 kw, kt = kws[0]
@@ -224,12 +255,58 @@ def build_events(ranges, durs, plan):
     return subs, pops, sfx, off
 
 
-def write_ass(path, subs, pops, title, total, meta, font):
+def _text_width(t):
+    """估算显示宽度（以一个汉字为 1）：英文数字约半个字宽。"""
+    return sum(1.0 if ord(c) > 0x2E80 else 0.55 for c in t)
+
+
+def wrap_cn(text, max_w, keep=()):
+    """中文字幕自动折行（libass 只在空格处断行，中文长句会跑出画面）。
+    折成宽度尽量相等的几行，不把 keep 里的重点词拆开；返回用 \n 分隔的文本。"""
+    if _text_width(text) <= max_w:
+        return text
+    n = int(_text_width(text) // max_w) + 1
+    protected = set()
+    for kw in keep:
+        i = text.find(kw)
+        if i >= 0:
+            protected.update(range(i + 1, i + len(kw)))
+    lines, start = [], 0
+    for k in range(1, n):
+        goal = _text_width(text) * k / n
+        acc, best = 0.0, None
+        for i in range(start + 1, len(text)):
+            acc = _text_width(text[:i])
+            if i in protected:
+                continue
+            if best is None or abs(acc - goal) < abs(_text_width(text[:best]) - goal):
+                best = i
+            if acc > goal + 2:
+                break
+        if best is None or best <= start:
+            continue
+        cut = best + 1 if text[best:best + 1] == " " else best
+        lines.append(text[start:best].strip())
+        start = cut
+    lines.append(text[start:].strip())
+    return "\n".join(x for x in lines if x)
+
+
+def write_ass(path, subs, pops, title, total, meta, font, sub=None):
     W, H = meta["w"], meta["h"]
     portrait = H >= W
     S = round(min(W, H) * 0.058)
     ol = max(2, round(S / 18))
-    mv_sub = round(H * (0.17 if portrait else 0.07))
+    sub = sub or SET.DEFAULT["sub"]
+    SS = round(S * sub["size"])
+    mv_sub = round(H * (sub["pos"] / 100 if sub["pos"] else (0.17 if portrait else 0.07)))
+    prim = SET.ass_color(sub["color"])
+    if sub["style"] == "box":        # 半透明黑底框
+        sub_style = f"{prim},&H00FFFFFF,&H60000000,&H60000000,1,0,0,0,100,100,1,0,3,{round(SS * 0.22)},0"
+    elif sub["style"] == "shadow":   # 无描边，柔和投影
+        sub_style = f"{prim},&H00FFFFFF,&H00000000,&H50000000,1,0,0,0,100,100,1,0,1,0,{max(2, round(SS / 10))}"
+    else:                            # 黑描边（默认）
+        sub_style = f"{prim},&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,1,0,1,{max(2, round(SS / 18))},{max(1, ol // 2)}"
     mv_pop = round(H * (0.27 if portrait else 0.16))
     mv_title = round(H * (0.07 if portrait else 0.05))
     head = f"""[Script Info]
@@ -241,7 +318,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,{font},{S},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,1,0,1,{ol},{max(1, ol // 2)},2,{round(W * 0.06)},{round(W * 0.06)},{mv_sub},1
+Style: Sub,{font},{SS},{sub_style},2,{round(W * 0.06)},{round(W * 0.06)},{mv_sub},1
 Style: Pop,{font},{round(S * 2.1)},&H0000D4FF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,2,0,1,{ol * 2},{ol},8,{round(W * 0.05)},{round(W * 0.05)},{mv_pop},1
 Style: Title,{font},{round(S * 1.1)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,1,0,0,0,100,100,2,0,3,{round(S * 0.35)},0,8,{round(W * 0.08)},{round(W * 0.08)},{mv_title},1
 
@@ -251,8 +328,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     lines = []
     if title:
         lines.append(f"Dialogue: 2,{_ass_time(0)},{_ass_time(total)},Title,,0,0,0,,{{\\fad(300,300)}}{_esc(title)}")
+    max_w = W * 0.88 / max(1, SS)          # 一行最多放多少个汉字宽
     for s in subs:
-        text = _esc(_clean(s["text"]))
+        text = _esc(wrap_cn(_clean(s["text"]), max_w, [_clean(k) for k, _ in s["kws"]]))
         for kw, kt in s["kws"]:
             ckw = _esc(_clean(kw))
             if not ckw or ckw not in text:
@@ -262,6 +340,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             tag = (f"{{\\c{col}\\fscx100\\fscy100\\t({dt},{dt + 110},\\fscx128\\fscy128)"
                    f"\\t({dt + 110},{dt + 240},\\fscx112\\fscy112)}}")
             text = text.replace(ckw, tag + ckw + "{\\r}", 1)
+        text = text.replace("\n", "\\N")
         lines.append(f"Dialogue: 1,{_ass_time(s['a'])},{_ass_time(s['b'])},Sub,,0,0,0,,{{\\fad(60,60)}}{text}")
     for p in pops:
         fx = p.get("effect", "pop")
@@ -346,7 +425,8 @@ def write_srt(path, subs):
 
 
 # ---------------------------------------------------------------- 混音 + 烧字幕
-def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, overlays=()):
+def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, overlays=(), st=None):
+    st = st or SET.normalize({})
     cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(body)]
     parts, labels = [], []
     if meta["has_audio"]:
@@ -380,15 +460,29 @@ def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, 
         parts.append(f"{vin}[b{k}]overlay={o['x']}:{o['y']}:eof_action=pass[v{k}]")
         vin = f"[v{k}]"
         idx += 1
-    parts.append(f"{vin}ass=subs.ass[v]")
+    vf = f"{vin}ass=subs.ass"
+    if st["fade"]["in"]:
+        vf += ",fade=t=in:st=0:d=0.6"
+    if st["fade"]["out"]:
+        vf += f",fade=t=out:st={max(0.0, total - 0.8):.3f}:d=0.8"
+    target = SET.RESOLUTIONS[st["export"]["res"]]
+    if target and min(meta["w"], meta["h"]) > target:   # 只缩小不放大
+        vf += (f",scale={target}:-2" if meta["w"] <= meta["h"] else f",scale=-2:{target}") + ",setsar=1"
+    parts.append(vf + "[v]")
     if labels:
-        parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first,"
-                     f"alimiter=limit=0.95[aout]")
+        amix = f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first"
+        if st["audio"]["loudnorm"]:      # 统一到短视频平台常用响度 -14 LUFS
+            amix += ",loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000"
+        if st["fade"]["in"]:
+            amix += ",afade=t=in:d=0.4"
+        if st["fade"]["out"]:
+            amix += f",afade=t=out:st={max(0.0, total - 0.8):.3f}:d=0.8"
+        parts.append(amix + ",alimiter=limit=0.95[aout]")
         amap = ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     else:
         amap = []
     cmd += ["-filter_complex", ";".join(parts), "-map", "[v]"] + amap + [
-        "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", str(SET.QUALITY_CRF[st["export"]["quality"]]),
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_mp4)]
     subprocess.run(cmd, check=True, cwd=str(workdir))
 
@@ -424,13 +518,14 @@ def broll_box(layout, W, H):
 def broll_events(ranges, durs, plan, total):
     """配图出现的成片时间：从这句开始，至少停留 BROLL_MIN 秒。钩子复制段不放配图。"""
     want = {b["id"]: b for b in plan.get("broll", []) if b.get("image")}
+    sp = SET.of(plan)["speed"]
     out, off, done = [], 0.0, set()
     for r, real in zip(ranges, durs):
         for p in r["phrases"]:
             b = want.get(p["id"])
             if b and not r.get("hook") and p["id"] not in done:
-                a = off + max(0.0, p["start"] - r["start"])
-                e = off + min(real, p["end"] - r["start"])
+                a = off + max(0.0, p["start"] - r["start"]) / sp
+                e = off + min(real, (p["end"] - r["start"]) / sp)
                 out.append({"a": a, "b": min(total, max(e, a + BROLL_MIN)), "item": b})
                 done.add(p["id"])
         off += real
@@ -460,17 +555,25 @@ def render(src, data, plan, out_dir, font="Microsoft YaHei", bgm_vol=0.10, log=p
            broll_dir=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    meta = probe(src)
+    src_meta = probe(src)
+    st = SET.of(plan)
+    W, H = SET.canvas_size(src_meta, st)
+    meta = dict(src_meta, w=W, h=H)          # 之后的字幕/配图都按成片画布算
     ranges = build_timeline(data, plan)
     if not ranges:
         raise RuntimeError("方案里没有要保留的内容。")
     tmp = Path(tempfile.mkdtemp(prefix="koubo_", dir=str(out_dir)))
     try:
-        log(f"剪切 {len(ranges)} 段…")
-        body, durs = render_segments(src, ranges, meta, tmp, log,
-                                     (lambda x: progress(0.75 * x)) if progress else None)
+        extra = []
+        if st["speed"] != 1:
+            extra.append(f"{st['speed']}倍速")
+        if (W, H) != (src_meta["w"], src_meta["h"]):
+            extra.append(f"画布 {W}×{H}")
+        log(f"剪切 {len(ranges)} 段…" + ("（" + "，".join(extra) + "）" if extra else ""))
+        body, durs = render_segments(src, ranges, src_meta, tmp, log,
+                                     (lambda x: progress(0.75 * x)) if progress else None, st, (W, H))
         subs, pops, sfx, total = build_events(ranges, durs, plan)
-        write_ass(tmp / "subs.ass", subs, pops, plan.get("title", ""), total, meta, font)
+        write_ass(tmp / "subs.ass", subs, pops, plan.get("title", ""), total, meta, font, st["sub"])
         overlays = []
         if broll_dir:
             for k, ev in enumerate(broll_events(ranges, durs, plan, total)):
@@ -483,14 +586,66 @@ def render(src, data, plan, out_dir, font="Microsoft YaHei", bgm_vol=0.10, log=p
                 overlays.append(dict(pos, clip=clip, a=ev["a"], b=ev["b"]))
         log(f"加配图 {len(overlays)} 张、字幕、音效 {len(sfx)} 个、BGM…")
         out_mp4 = out_dir / "成片.mp4"
-        final_mix(body, tmp, out_mp4, sfx, plan.get("bgm", "none"), total, meta, bgm_vol, overlays)
+        final_mix(body, tmp, out_mp4, sfx, plan.get("bgm", "none"), total, meta, bgm_vol, overlays, st)
         write_srt(out_dir / "字幕.srt", subs)
         shutil.copy(tmp / "subs.ass", out_dir / "包装字幕.ass")
         (out_dir / "方案.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
         if progress:
             progress(1.0)
-        log(f"完成：原片 {meta['duration']:.0f} 秒 → 成片 {total:.0f} 秒")
+        log(f"完成：原片 {src_meta['duration']:.0f} 秒 → 成片 {total:.0f} 秒")
         return {"video": str(out_mp4), "duration": total, "segments": len(ranges), "sfx": len(sfx),
                 "broll": len(overlays)}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- 封面
+def _cover_lines(text, per_line):
+    text = text.strip()
+    if "\n" in text:
+        return [x.strip() for x in text.split("\n") if x.strip()][:3]
+    if len(text) <= per_line:
+        return [text]
+    cut = (len(text) + 1) // 2
+    return [text[:cut], text[cut:]]
+
+
+def make_cover(src, t, text, plan, out_jpg, font="Microsoft YaHei"):
+    """从原片第 t 秒取一帧（套用画布和调色），压上大标题，存成 jpg。"""
+    src_meta = probe(src)
+    st = SET.of(plan)
+    W, H = SET.canvas_size(src_meta, st)
+    S = round(min(W, H) * 0.058)
+    portrait = H >= W
+    lines = _cover_lines(text or plan.get("title") or "", 7 if portrait else 12)
+    fs = round(S * (2.5 if portrait else 2.2))
+    head = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {W}
+PlayResY: {H}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: C,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,2,0,1,{max(4, fs // 11)},{max(3, fs // 16)},8,{round(W * 0.05)},{round(W * 0.05)},{round(H * (0.16 if portrait else 0.1))},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    body = []
+    for i, ln in enumerate(lines):   # 一行白一行黄，最常见的口播封面配色
+        col = "&H00FFFFFF&" if i % 2 == 0 else "&H0000D4FF&"
+        body.append(f"{{\\c{col}}}{_esc(ln)}")
+    joined = "\\N".join(body)
+    ev = f"Dialogue: 0,0:00:00.00,0:00:05.00,C,,0,0,0,,{joined}\n" if lines else ""
+    tmp = Path(tempfile.mkdtemp(prefix="koubo_cover_", dir=str(Path(out_jpg).parent)))
+    try:
+        (tmp / "cover.ass").write_text(head + ev, encoding="utf-8-sig")
+        vf = SET.video_filters(src_meta, st, W, H, "[0:v]", "") + ",ass=cover.ass[v]"
+        subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, t):.3f}",
+                        "-i", str(Path(src).resolve()), "-frames:v", "1", "-filter_complex", vf, "-map", "[v]",
+                        "-q:v", "2", str(Path(out_jpg).resolve())], check=True, cwd=str(tmp))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return str(out_jpg)

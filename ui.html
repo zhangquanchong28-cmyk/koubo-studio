@@ -56,6 +56,18 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);co
 dialog label{display:block;margin:10px 0 4px;color:var(--sub)}
 dialog input,dialog select{width:100%}
 .legend span{margin-right:12px}
+/* 全片设置 */
+details.sets>summary{cursor:pointer;font-weight:600;font-size:16px}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:12px}
+.sbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.sbox h4{margin:0 0 6px;font-size:14px}
+.sbox label{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px}
+.sbox label>span:first-child{width:56px;flex:none;color:var(--muted)}
+.sbox input[type=range]{flex:1;min-width:0}
+.sbox .val{width:42px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.sbox textarea{width:100%;box-sizing:border-box}
+.sbox img{width:100%;border-radius:8px;margin-top:6px}
+.fixed{color:var(--brand);font-size:11px;margin-left:4px}
 /* 时间线编辑器 */
 .vtab{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:8px;vertical-align:middle}
 .vtab button{border:0;border-radius:0;padding:4px 12px;font-size:13px}
@@ -68,6 +80,11 @@ dialog input,dialog select{width:100%}
 .tl-stage-wrap{display:flex;flex-direction:column;align-items:center}
 .tl-stage{position:relative;height:min(58vh,560px);max-width:100%;aspect-ratio:9/16;background:#000;overflow:hidden;border-radius:8px;--S:16px}
 .tl-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:50% 35%}
+.tl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scale(1.15);display:none}
+.tl-stage.canvas .tl-bg{display:block}
+.ov-sub span{font-size:calc(var(--S) * var(--subscale,1)) !important;color:var(--subcolor,#fff) !important}
+.tl-stage[data-substyle=box] .ov-sub span{-webkit-text-stroke:0;text-shadow:none;background:rgba(0,0,0,.62);padding:.1em .3em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.tl-stage[data-substyle=shadow] .ov-sub span{-webkit-text-stroke:0;text-shadow:0 2px 6px rgba(0,0,0,.75)}
 .ov{position:absolute;left:0;right:0;pointer-events:none;text-align:center}
 .ov-sub{bottom:var(--sub-b);padding:0 6%}
 .ov-sub span{font-size:var(--S);font-weight:700;color:#fff;-webkit-text-stroke:calc(var(--S)/18) #000;paint-order:stroke fill;text-shadow:0 1px 3px rgba(0,0,0,.6)}
@@ -196,6 +213,7 @@ const BIGFX = {"":"—", pop:"弹出", count:"数字滚动", card:"3D卡片"};
 const LAYOUT = {"":"—", pip:"画中画", full:"全屏", corner:"小窗"};
 const BGM = {upbeat:"轻快", chill:"舒缓", hiphop:"节奏感", none:"不要音乐"};
 let cur = null, st = null, dirty = false, timer = null;
+let ws = null, wt = null;   // 正在编辑的全片设置、字幕改字
 let view = (() => { try { return localStorage.getItem("koubo_view") || "table"; } catch (e) { return "table"; } })();
 
 async function api(path, opt = {}) {
@@ -262,7 +280,7 @@ async function selectProject(id) {
   cur = id; dirty = false; st = null; await refresh(true); loadProjects();
 }
 function sigOf(s) {   // 方案/成片有变化才整页重画（别打断你正在看的视频）
-  return JSON.stringify([s.stage, s.plan_mtime, (s.chat || []).length, s.rendered_at, s.result && s.result.duration, s.jianying, s.concat, !!s.transcript]);
+  return JSON.stringify([s.stage, s.plan_mtime, (s.chat || []).length, s.cover && s.cover.at, s.rendered_at, s.result && s.result.duration, s.jianying, s.concat, !!s.transcript]);
 }
 async function refresh(full) {
   if (!cur) return;
@@ -301,7 +319,10 @@ function render() {
       <button class="primary" onclick="makePlan()" data-busy>${plan ? "重新生成方案" : "AI 生成方案"}</button></div>
       ${plan ? `<p class="muted" style="margin:8px 0 0">💡 ${esc(plan.notes || "")}${plan.usage ? ` <span class="tag">本次约 $${plan.usage.usd}</span>` : ""}</p>` : ""}</div>`;
   }
-  if (t && plan) h += chatBox() + (view === "timeline" ? timelineCard() : planEditor(t, plan));
+  if (t && plan) {
+    if (!dirty || !ws) { ws = normSet(plan.settings); wt = Object.assign({}, plan.text || {}); }
+    h += chatBox() + settingsCard() + (view === "timeline" ? timelineCard() : planEditor(t, plan));
+  }
   if (st.result) {
     const v = Date.now();
     h += `<div class="card"><h2>③ 成片（${Math.round(st.result.duration)} 秒）</h2>
@@ -326,16 +347,120 @@ function render() {
   m.innerHTML = h;
   if (t && plan && view === "timeline" && window.Timeline) Timeline.mount($("#tl"), {pid: cur, transcript: t, plan,
     onDirty: () => { dirty = true; const b = $("#saveBtn"); if (b) b.textContent = "保存方案 *"; },
-    SFX, COLORS, BIGFX, LAYOUT, BGM});
+    SFX, COLORS, BIGFX, LAYOUT, BGM, settings: ws});
   renderStatus();
 }
 
+function dtext(p) { return (wt && wt[String(p.id)]) || p.text; }
+function editText(id) {
+  const p = st.transcript.phrases.find(x => x.id === id);
+  const v = prompt(`改第 ${id} 句的字幕文字（只改字幕显示，不影响剪辑）：\n原文：${p.text}`, dtext(p));
+  if (v === null) return;
+  const nv = v.trim();
+  if (!nv || nv === p.text.trim()) delete wt[String(id)]; else wt[String(id)] = nv;
+  const tr = document.querySelector(`tr[data-id="${id}"] td.txt .tx`);
+  if (tr) tr.innerHTML = esc(dtext(p)) + (wt[String(id)] ? '<span class="fixed">已改字</span>' : "");
+  edit();
+}
 function hl(text, e) {
   let s = esc(text);
   if (e) for (const k of e.keywords || []) if (k) s = s.replace(esc(k), `<mark class="${e.color}">${esc(k)}</mark>`);
   return s;
 }
 
+const COLOR_PRESETS = {
+  none: {brightness: 0, contrast: 1, saturation: 1, temp: 6500, sharpen: 0},
+  fresh: {brightness: 0.03, contrast: 1.02, saturation: 1.12, temp: 6900, sharpen: 0.3},
+  warm: {brightness: 0.02, contrast: 1.02, saturation: 1.06, temp: 5300, sharpen: 0.2},
+  cool: {brightness: 0, contrast: 1.04, saturation: 0.98, temp: 7800, sharpen: 0.2},
+  film: {brightness: -0.01, contrast: 1.06, saturation: 0.78, temp: 6200, sharpen: 0.2},
+  bright: {brightness: 0.06, contrast: 1.03, saturation: 1.04, temp: 6500, sharpen: 0.3}};
+const PRESET_NAMES = {none: "原图", fresh: "清新", warm: "暖调", cool: "冷调", film: "高级灰", bright: "提亮"};
+function normSet(x) {
+  x = x || {};
+  const c = x.color || {}, sb = x.sub || {}, a = x.audio || {}, f = x.fade || {}, e = x.export || {};
+  return {speed: x.speed || 1, canvas: x.canvas || "original",
+    color: Object.assign({preset: "none"}, COLOR_PRESETS.none, c),
+    sub: Object.assign({size: 1, pos: 0, style: "outline", color: "#FFFFFF"}, sb),
+    audio: {denoise: !!a.denoise, loudnorm: a.loudnorm !== false},
+    fade: {in: !!f.in, out: f.out !== false},
+    export: Object.assign({res: "original", quality: "high"}, e)};
+}
+function setS(path, v) {   // path 如 "color.temp"
+  const ks = path.split("."); let o = ws;
+  for (const k of ks.slice(0, -1)) o = o[k];
+  o[ks[ks.length - 1]] = v;
+  if (path.startsWith("color.") && path !== "color.preset") ws.color.preset = "none";
+  dirty = true; const b = $("#saveBtn"); if (b) b.textContent = "保存方案 *";
+  const lab = document.querySelector(`[data-val="${path}"]`); if (lab) lab.textContent = fmtVal(path, v);
+  if (window.Timeline && Timeline.active()) Timeline.setSettings(ws);
+}
+function applyPreset(name) {
+  Object.assign(ws.color, COLOR_PRESETS[name], {preset: name});
+  dirty = true; const b = $("#saveBtn"); if (b) b.textContent = "保存方案 *";
+  const box = $("#setbox"); if (box) box.outerHTML = settingsCard(true);
+  if (window.Timeline && Timeline.active()) Timeline.setSettings(ws);
+}
+function fmtVal(path, v) {
+  if (path === "color.temp") return v + "K";
+  if (path === "sub.pos") return +v ? v + "%" : "自动";
+  if (path === "sub.size") return (+v).toFixed(2) + "×";
+  return (+v).toFixed(2);
+}
+function rng(path, label, min, max, step) {
+  const v = path.split(".").reduce((o, k) => o[k], ws);
+  return `<label><span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${v}"
+    oninput="setS('${path}', +this.value)"><span class="val" data-val="${path}">${fmtVal(path, v)}</span></label>`;
+}
+function sel(path, label, opts, num) {
+  const v = path.split(".").reduce((o, k) => o[k], ws);
+  return `<label><span>${label}</span><select onchange="setS('${path}', ${num ? "+this.value" : "this.value"})">
+    ${Object.entries(opts).map(([k, n]) => `<option value="${k}" ${String(v) === String(k) ? "selected" : ""}>${n}</option>`).join("")}</select></label>`;
+}
+function chk(path, label) {
+  const v = path.split(".").reduce((o, k) => o[k], ws);
+  return `<label><input type="checkbox" ${v ? "checked" : ""} onchange="setS('${path}', this.checked)"> ${label}</label>`;
+}
+function settingsCard(open) {
+  const cv = st.cover;
+  const opened = open || (() => { try { return localStorage.getItem("koubo_sets") === "1"; } catch (e) { return false; } })();
+  return `<details class="card sets" id="setbox" ${opened ? "open" : ""} ontoggle="try{localStorage.setItem('koubo_sets', this.open ? '1' : '0')}catch(e){}">
+    <summary>🎛 全片设置 <span class="muted" style="font-weight:400;font-size:13px">— 变速、画面比例、调色、字幕样式、声音、导出、封面（改完点「保存方案」）</span></summary>
+    <div class="sgrid">
+      <div class="sbox"><h4>节奏与画面</h4>
+        ${sel("speed", "变速", {"1": "1.0× 原速", "1.05": "1.05×", "1.1": "1.1×（推荐）", "1.15": "1.15×", "1.2": "1.2×", "1.25": "1.25×", "1.3": "1.3×", "1.5": "1.5×"}, true)}
+        ${sel("canvas", "比例", {original: "原始比例", "9:16": "9:16 竖屏", "16:9": "16:9 横屏", "1:1": "1:1 方形", "3:4": "3:4"})}
+        <p class="muted" style="font-size:12px;margin:4px 0 0">比例和原片不同时，空出的地方自动用模糊背景填满。</p></div>
+      <div class="sbox"><h4>调色</h4>
+        <label><span>滤镜</span><select onchange="applyPreset(this.value)">${Object.entries(PRESET_NAMES).map(([k, n]) => `<option value="${k}" ${ws.color.preset === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        ${rng("color.brightness", "亮度", -0.3, 0.3, 0.01)}${rng("color.contrast", "对比度", 0.5, 1.8, 0.01)}
+        ${rng("color.saturation", "饱和度", 0, 2, 0.01)}${rng("color.temp", "色温", 3000, 10000, 100)}${rng("color.sharpen", "锐化", 0, 1.5, 0.05)}</div>
+      <div class="sbox"><h4>字幕样式</h4>
+        ${rng("sub.size", "字号", 0.6, 1.8, 0.05)}${rng("sub.pos", "离底部", 0, 45, 1)}
+        ${sel("sub.style", "样式", {outline: "黑色描边", box: "半透明底框", shadow: "柔和投影"})}
+        <label><span>颜色</span><input type="color" value="${ws.sub.color}" oninput="setS('sub.color', this.value.toUpperCase())"></label></div>
+      <div class="sbox"><h4>声音与片头片尾</h4>
+        ${chk("audio.denoise", "人声降噪（有底噪/空调声时开）")}${chk("audio.loudnorm", "音量统一到抖音标准（-14 LUFS）")}
+        ${chk("fade.in", "开头渐显")}${chk("fade.out", "结尾淡出")}</div>
+      <div class="sbox"><h4>导出</h4>
+        ${sel("export.res", "分辨率", {original: "跟原片一样", "1080": "1080P", "720": "720P（文件小）"})}
+        ${sel("export.quality", "画质", {high: "高（文件大）", standard: "标准"})}</div>
+      <div class="sbox"><h4>封面</h4>
+        <textarea id="cv_text" rows="2" placeholder="封面大字，回车换行；留空用顶部标题">${esc(cv && cv.text != null ? cv.text : (st.plan.title || ""))}</textarea>
+        <label><span>画面</span><input id="cv_t" type="number" step="0.1" min="0" style="width:80px" value="${cv ? cv.t : ""}" placeholder="自动"> 秒（原片）
+          ${view === "timeline" ? `<button class="mini" onclick="$('#cv_t').value = Timeline.currentTime().toFixed(1)">用预览当前画面</button>` : ""}</label>
+        <button onclick="makeCover()" data-busy>生成封面</button>
+        ${cv ? `<a href="/api/p/${cur}/file/封面.jpg?dl=1"><button class="mini">下载</button></a><img src="/api/p/${cur}/file/封面.jpg?v=${cv.at}">` : ""}</div>
+    </div></details>`;
+}
+async function makeCover() {
+  try {
+    const t = $("#cv_t").value, text = $("#cv_text").value;   // 先读：保存会重画页面
+    if (dirty) await savePlan();
+    await post(`/api/p/${cur}/cover`, {t, text});
+    refresh(false);
+  } catch (e) { alert(e.message); }
+}
 function viewTabs() {
   return `<span class="vtab"><button class="${view === "table" ? "on" : ""}" onclick="setView('table')">表格</button><button class="${view === "timeline" ? "on" : ""}" onclick="setView('timeline')">时间线</button></span>`;
 }
@@ -366,7 +491,7 @@ function planEditor(t, plan) {
     return `<tr data-id="${p.id}" class="${isDel ? "deleted" : ""} ${p.filler ? "filler" : ""}">
       <td><input type="checkbox" class="keep" ${isDel ? "" : "checked"} ${p.filler ? "disabled" : ""} onchange="edit()"></td>
       <td class="muted">${p.id}<br><small>${p.start.toFixed(1)}s</small></td>
-      <td class="txt">${hl(p.text, emph[p.id])}${p.filler ? '<span class="tag">语气词</span>' : ""}${plan.hook === p.id ? '<span class="tag">开头钩子</span>' : ""}</td>
+      <td class="txt"><span class="tx">${hl(dtext(p), emph[p.id])}${(plan.text || {})[String(p.id)] ? '<span class="fixed">已改字</span>' : ""}</span> <button class="mini" title="改字幕文字" onclick="editText(${p.id})">✎</button>${p.filler ? '<span class="tag">语气词</span>' : ""}${plan.hook === p.id ? '<span class="tag">开头钩子</span>' : ""}</td>
       <td><input class="kw" value="${esc((e.keywords || []).join("，"))}" placeholder="重点词，逗号分隔" oninput="edit()"></td>
       <td><select class="color" onchange="edit()">${Object.entries(COLORS).map(([k, v]) => `<option value="${k}" ${e.color === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
       <td><select class="big" onchange="edit()">${Object.entries(BIGFX).map(([k, v]) => `<option value="${k}" ${(e.big ? (e.effect || "pop") : "") === k ? "selected" : ""}>${v}</option>`).join("")}</select></td>
@@ -391,7 +516,7 @@ function planEditor(t, plan) {
 }
 
 function collect() {
-  const plan = {title: $("#title").value, bgm: $("#bgm").value, delete: [], emphasis: [], hook: null, notes: st.plan.notes || "", trim: st.plan.trim || {}};
+  const plan = {title: $("#title").value, bgm: $("#bgm").value, delete: [], emphasis: [], hook: null, notes: st.plan.notes || "", trim: st.plan.trim || {}, text: wt || {}};
   document.querySelectorAll("tbody tr").forEach(tr => {
     const id = +tr.dataset.id;
     if (!tr.querySelector(".keep").checked) plan.delete.push(id);
@@ -419,6 +544,7 @@ function edit() {
 function clearHook() { document.querySelectorAll(".hook").forEach(r => r.checked = false); edit(); }
 async function savePlan() {
   const plan = view === "timeline" && window.Timeline && Timeline.active() ? Timeline.getPlan() : collect();
+  plan.settings = ws || normSet(st.plan.settings);
   try { const j = await post(`/api/p/${cur}/save`, {plan}); dirty = false; st.plan = j.plan; render(); } catch (e) { alert(e.message); }
 }
 function brollCell(p, b) {

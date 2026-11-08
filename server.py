@@ -194,6 +194,34 @@ def fill_broll(pid, cfg, ids=None, force=False, source=None):
     return total
 
 
+def default_cover_time(data, plan):
+    """封面默认取：开头钩子句 → 第一个大字句 → 第 1 秒。"""
+    by = {p["id"]: p for p in data["phrases"]}
+    if plan.get("hook") in by:
+        return by[plan["hook"]]["start"] + 0.3
+    for e in plan.get("emphasis", []):
+        if e.get("big") and e["id"] in by and e["id"] not in set(plan.get("delete", [])):
+            return by[e["id"]]["start"] + 0.3
+    return 1.0
+
+
+def job_cover(pid, t=None, text=None):
+    cfg = load_cfg()
+
+    def fn():
+        data = load_transcript(pid)
+        plan = json.loads(_plan_path(pid).read_text(encoding="utf-8"))
+        tt = float(t) if t not in (None, "") else default_cover_time(data, plan)
+        tt = max(0.0, min(tt, float(data["duration"]) - 0.1))
+        words = text if text is not None else plan.get("title", "")
+        out = pdir(pid) / "out"
+        out.mkdir(exist_ok=True)
+        packer.make_cover(source_of(pid), tt, words, plan, out / "封面.jpg", font=cfg["font"])
+        update(pid, cover={"at": time.time(), "t": round(tt, 2), "text": words})
+        log(pid, f"封面已生成（原片第 {tt:.1f} 秒）")
+    run_job(pid, "生成封面", fn)
+
+
 def job_chat(pid, text):
     cfg = load_cfg()
 
@@ -381,7 +409,7 @@ class H(BaseHTTPRequestHandler):
                     if not planner.IMG_NAME.match(img):
                         return self._json({"error": "不允许"}, 403)
                     return self._file(pdir(pid) / "broll" / img)
-                if name not in ("成片.mp4", "字幕.srt", "包装字幕.ass", "方案.json"):
+                if name not in ("成片.mp4", "字幕.srt", "包装字幕.ass", "方案.json", "封面.jpg"):
                     return self._json({"error": "不允许"}, 403)
                 dl = parse_qs(u.query).get("dl")
                 st = read_state(pid)
@@ -508,6 +536,10 @@ class H(BaseHTTPRequestHandler):
                     if not (pdir(pid) / "plan.json").is_file():
                         return self._json({"error": "先生成或保存方案"}, 400)
                     job_jianying(pid)
+                elif act == "cover":
+                    if not _plan_path(pid).is_file():
+                        return self._json({"error": "先生成或保存方案"}, 400)
+                    job_cover(pid, body.get("t"), body.get("text"))
                 elif act == "chat":
                     text = str(body.get("text", "")).strip()
                     if not text:

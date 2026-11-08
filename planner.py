@@ -7,6 +7,8 @@ from pathlib import Path
 
 import anthropic
 
+import settings as SET
+
 SFX_KINDS = ["whoosh", "hit", "ding", "pop", "type", "page", "sparkle", "tick", "none"]
 COLORS = ["yellow", "red", "blue"]
 BGM_KINDS = ["upbeat", "chill", "hiphop", "none"]
@@ -35,13 +37,17 @@ SYSTEM_PROMPT = """你是一名资深短视频口播剪辑师，报价 200～300
    - query：2～4 个英文单词，用来在免费图库搜实拍照片（如 "office night overtime"）。
    - prompt：英文生图提示词，写实摄影风格，描述主体、场景、光线、构图，结尾加 "photorealistic, no text, no watermark"。不要出现真实名人、品牌 logo、文字。
    - layout：pip=画中画（图片在画面上半部分，人物保留在下方，竖屏默认用这个）；full=全屏切到图片（重要场景，全片最多 2 次）；corner=右上角小窗（轻量补充）。
-6. bgm：upbeat=轻快活泼，chill=舒缓治愈/情感，hiphop=有态度/节奏感，none=严肃话题不要音乐。
+6. 字幕纠错（text）：转写是机器识别的，常有同音错字（如"减触高级感"应为"剪出高级感"、"简映"应为"剪映"、"对其"应为"对齐"）。
+   只改明显的错别字和同音字，不改说法、不润色、不删字，改后字数尽量和原句一致；没有错就不要列出。格式：{"编号": "改正后的整句"}。
+   重点词要按改正后的句子来选。
+7. bgm：upbeat=轻快活泼，chill=舒缓治愈/情感，hiphop=有态度/节奏感，none=严肃话题不要音乐。
 
 ## 输出
 只输出一个 JSON 对象，不要任何其他文字：
 {"title": "...", "hook": 编号或null, "delete": [编号...],
  "emphasis": [{"id": 编号, "keywords": ["..."], "color": "yellow", "big": false, "effect": "pop", "zoom": false, "sfx": "pop"}],
  "broll": [{"id": 编号, "desc": "...", "query": "...", "prompt": "...", "layout": "pip"}],
+ "text": {"编号": "改正错别字后的整句"},
  "bgm": "upbeat", "notes": "一句话说明你的剪辑思路"}"""
 
 
@@ -157,6 +163,11 @@ REVISE_PROMPT = """
 - 只改用户要求的部分，其他保持原样（包括 broll 里已有的 image/source/credit 字段，原样带上）。
 - 用户说的"第 N 句"指编号 N。用户按"第几秒"说位置时，按句子开始时间找最接近的编号。
 - 新加或改了描述的配图：image 留空字符串，程序会重新找图。
+- 用户要改字幕上的字（错别字、换说法）：写进 text，{"编号": "整句新文字"}。
+- 全片设置在 settings 里：speed 整体变速（1.0～1.5），canvas 画面比例（original/9:16/16:9/1:1/3:4），
+  color 调色（preset: none/fresh/warm/cool/film/bright，brightness -0.3～0.3，contrast 0.5～1.8，saturation 0～2，temp 色温 3000～10000，sharpen 0～1.5），
+  sub 字幕样式（size 0.6～1.8 倍，pos 距底部百分比 0=自动，style: outline/box/shadow，color 十六进制），
+  audio（denoise 降噪，loudnorm 响度统一），fade（in 开头渐显，out 结尾淡出），export（res: original/1080/720，quality: high/standard）。
 - 用户的话里如果有以后都要遵守的经验（"以后都…""记住…""我习惯…"），把它改写成一条具体的剪辑规则放进 remember，否则 remember 为空字符串。
 只输出一个 JSON 对象，不要其他文字：
 {"plan": {完整的新方案，格式同上}, "reply": "一两句中文，告诉用户你改了什么", "remember": ""}"""
@@ -239,6 +250,13 @@ def sanitize(raw, data):
             return None
 
     delete = sorted({_int(i) for i in raw.get("delete", []) if _int(i) in by_id})
+    fixes = {}
+    for k, v in (raw.get("text") or {}).items():          # 字幕改字（AI 纠错或用户手改）
+        pid = _int(k)
+        v = str(v or "").strip()
+        if pid in by_id and v and v != by_id[pid]["text"].strip() and len(v) <= max(8, 2 * len(by_id[pid]["text"])):
+            fixes[str(pid)] = v[:200]
+    shown = {pid: fixes.get(str(pid), p["text"]) for pid, p in by_id.items()}
     hook = _int(raw.get("hook"))
     if hook not in by_id or hook in delete:
         hook = None
@@ -252,7 +270,7 @@ def sanitize(raw, data):
         if pid not in by_id or pid in delete or pid in seen:
             continue
         seen.add(pid)
-        kws = [k for k in e.get("keywords", []) if isinstance(k, str) and k.strip() and k.strip() in by_id[pid]["text"]][:2]
+        kws = [k for k in e.get("keywords", []) if isinstance(k, str) and k.strip() and k.strip() in shown[pid]][:2]
         emph.append({
             "id": pid, "keywords": [k.strip() for k in kws],
             "color": e.get("color") if e.get("color") in COLORS else "yellow",
@@ -294,6 +312,8 @@ def sanitize(raw, data):
         "emphasis": sorted(emph, key=lambda x: x["id"]),
         "broll": sorted(broll, key=lambda x: x["id"]),
         "trim": trim,
+        "text": fixes,
+        "settings": SET.normalize(raw.get("settings")),
         "bgm": raw.get("bgm") if raw.get("bgm") in BGM_KINDS else "upbeat",
         "notes": str(raw.get("notes") or ""),
     }

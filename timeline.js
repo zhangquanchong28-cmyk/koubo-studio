@@ -23,6 +23,7 @@
     p.trim = p.trim || {};
   }
   const gone = ph => S.del.has(ph.id) || ph.filler;
+  const shown = ph => (S.wp.text || {})[String(ph.id)] || ph.text;
   const trimOf = id => S.wp.trim[String(id)] || [0, 0];
 
   function spanOf(i) {   // 与 packer.build_timeline.span 相同的规则
@@ -50,12 +51,28 @@
   }
 
   function kwTime(p, kw) {   // 没有逐字时间时按字数比例估计关键词出现的时间
-    const i = p.text.indexOf(kw);
+    const t = shown(p), i = t.indexOf(kw);
     if (i < 0) return p.start;
-    return p.start + (p.end - p.start) * (i / Math.max(1, p.text.length));
+    return p.start + (p.end - p.start) * (i / Math.max(1, t.length));
   }
 
-  function touch() { maps(); buildRanges(); drawTracks(); drawProps(); S.ctx.onDirty(); }
+  function remember() {   // 记一步历史（每次修改后调用）
+    const now = JSON.stringify(S.wp);
+    if (now === S.last) return;
+    S.undo.push(S.last); if (S.undo.length > 100) S.undo.shift();
+    S.redo = []; S.last = now;
+  }
+  function touch() { maps(); buildRanges(); drawTracks(); drawProps(); remember(); S.ctx.onDirty(); }
+  function travel(from, to) {
+    if (!from.length) return;
+    to.push(S.last); S.last = from.pop();
+    S.wp = JSON.parse(S.last);
+    maps(); buildRanges(); drawTracks(); drawProps();
+    S.el.querySelector(".tl-title").value = S.wp.title || "";
+    S.el.querySelector(".tl-bgm").value = S.wp.bgm || "upbeat";
+    S.ctx.onDirty();
+  }
+  const undo = () => travel(S.undo, S.redo), redo = () => travel(S.redo, S.undo);
 
   function setEmph(id, patch) {
     const p = S.wp, list = p.emphasis = p.emphasis || [];
@@ -92,12 +109,14 @@
   function mount(el, ctx) {
     destroy();
     const wp = JSON.parse(JSON.stringify(ctx.plan));
-    S = {el, ctx, wp, phrases: ctx.transcript.phrases, dur: +ctx.transcript.duration, W: 1080, H: 1920};
+    S = {el, ctx, wp, phrases: ctx.transcript.phrases, dur: +ctx.transcript.duration, W: 1080, H: 1920,
+      undo: [], redo: [], last: JSON.stringify(wp), st: ctx.settings || {}};
     if (keep.pid !== ctx.pid) Object.assign(keep, {sel: null, pxps: null, time: 0, pid: ctx.pid, scroll: 0});
     maps(); buildRanges();
     el.innerHTML = `
       <div class="tl-bar">
         <button class="tl-play" title="播放/暂停（空格）">▶</button>
+        <button class="tl-undo" title="撤销（Ctrl+Z）">↶</button><button class="tl-redo" title="重做（Ctrl+Shift+Z）">↷</button>
         <span class="tl-time mono">0:00.0 / 0:00.0</span>
         <label>标题 <input class="tl-title" maxlength="20" style="width:180px"></label>
         <label>BGM <select class="tl-bgm">${Object.entries(ctx.BGM).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
@@ -106,6 +125,7 @@
       </div>
       <div class="tl-main">
         <div class="tl-stage-wrap"><div class="tl-stage">
+          <video class="tl-bg" muted playsinline preload="auto" src="/api/p/${ctx.pid}/file/source"></video>
           <video class="tl-video" preload="auto" playsinline src="/api/p/${ctx.pid}/file/source"></video>
           <div class="ov ov-broll"></div><div class="ov ov-pop"></div><div class="ov ov-title"></div><div class="ov ov-sub"></div>
         </div><p class="muted tl-hint">预览是近似效果（字体、动画以出片为准）。空格播放，Delete 删除/恢复，←/→ 上一句/下一句，拖句子两头微调入出点。</p></div>
@@ -120,21 +140,24 @@
         <div class="tl-head"></div>
       </div></div>`;
     S.v = el.querySelector(".tl-video");
+    S.bg = el.querySelector(".tl-bg");
     S.stage = el.querySelector(".tl-stage");
     S.scroll = el.querySelector(".tl-scroll");
     S.inner = el.querySelector(".tl-inner");
     const title = el.querySelector(".tl-title"), bgm = el.querySelector(".tl-bgm"), zoom = el.querySelector(".tl-zoom");
     title.value = wp.title || ""; bgm.value = wp.bgm || "upbeat";
     title.oninput = () => { S.wp.title = title.value; ctx.onDirty(); };
-    bgm.onchange = () => { S.wp.bgm = bgm.value; ctx.onDirty(); };
+    title.onchange = () => remember();
+    bgm.onchange = () => { S.wp.bgm = bgm.value; remember(); ctx.onDirty(); };
     S.pxps = keep.pxps || clamp((S.scroll.clientWidth - 60) / Math.max(1, S.dur), 4, 160);
     zoom.value = S.pxps;
     zoom.oninput = () => { const c = timeAtCenter(); S.pxps = keep.pxps = +zoom.value; drawTracks(); centerOn(c); };
     el.querySelector(".tl-play").onclick = togglePlay;
+    el.querySelector(".tl-undo").onclick = undo;
+    el.querySelector(".tl-redo").onclick = redo;
     S.v.addEventListener("loadedmetadata", () => {
-      S.W = S.v.videoWidth || S.W; S.H = S.v.videoHeight || S.H;
-      S.stage.style.aspectRatio = `${S.W} / ${S.H}`;
-      layout();
+      S.srcW = S.v.videoWidth || S.W; S.srcH = S.v.videoHeight || S.H;
+      applySettings();
       S.v.currentTime = keep.time || (S.ranges[0] ? S.ranges[0].s : 0);
     });
     S.v.addEventListener("error", () => {
@@ -150,12 +173,39 @@
     S.raf = requestAnimationFrame(tick);
   }
 
+  const CANVAS = {"9:16": [1080, 1920], "16:9": [1920, 1080], "1:1": [1080, 1080], "3:4": [1080, 1440]};
+  function applySettings() {   // 全片设置的近似预览
+    if (!S) return;
+    const st = S.st || {}, c = st.color || {}, sub = st.sub || {};
+    const sw = S.srcW || S.W, sh = S.srcH || S.H, cv = CANVAS[st.canvas];
+    [S.W, S.H] = cv && Math.abs(cv[0] / cv[1] - sw / sh) > 0.01 ? cv : [sw, sh];
+    S.stage.style.aspectRatio = `${S.W} / ${S.H}`;
+    S.stage.classList.toggle("canvas", !!(cv && (S.W !== sw || S.H !== sh)));
+    const sp = st.speed || 1;
+    S.v.playbackRate = sp; S.bg.playbackRate = sp;
+    const t = c.temp || 6500;
+    const warm = t < 6500 ? `sepia(${((6500 - t) / 3500 * 0.45).toFixed(3)})` : "";
+    const cool = t > 6500 ? `hue-rotate(${(-(t - 6500) / 3500 * 10).toFixed(1)}deg) saturate(${(1 - (t - 6500) / 3500 * 0.1).toFixed(3)})` : "";
+    const f = `brightness(${(1 + (c.brightness || 0) * 1.4).toFixed(3)}) contrast(${c.contrast || 1}) saturate(${c.saturation ?? 1}) ${warm} ${cool}`;
+    S.v.style.filter = f;
+    S.bg.style.filter = f + " blur(18px) brightness(0.9)";
+    const ss = S.stage.style;
+    ss.setProperty("--subscale", sub.size || 1);
+    ss.setProperty("--subcolor", sub.color || "#FFFFFF");
+    S.stage.dataset.substyle = sub.style || "outline";
+    S.subPos = sub.pos || 0;
+    layout();
+    S.el.querySelector(".ov-sub").dataset.k = "";      // 让字幕重画
+  }
+  function setSettings(st) { if (!S) return; S.st = JSON.parse(JSON.stringify(st || {})); applySettings(); }
+
   function destroy() {
     if (!S) return;
     cancelAnimationFrame(S.raf);
     document.removeEventListener("keydown", S.onKey);
     if (S.ro) S.ro.disconnect();
     if (S.v) { keep.time = S.v.currentTime; S.v.pause(); S.v.removeAttribute("src"); S.v.load(); }
+    if (S.bg) { S.bg.pause(); S.bg.removeAttribute("src"); S.bg.load(); }
     S = null;
   }
 
@@ -172,7 +222,7 @@
     S.k = k;
     const st = S.stage.style;
     st.setProperty("--S", Sz + "px");
-    st.setProperty("--sub-b", (portrait ? 17 : 7) + "%");
+    st.setProperty("--sub-b", (S.subPos ? S.subPos : (portrait ? 17 : 7)) + "%");
     st.setProperty("--pop-t", (portrait ? 27 : 16) + "%");
     st.setProperty("--title-t", (portrait ? 7 : 5) + "%");
   }
@@ -210,8 +260,13 @@
       }
     }
     keep.time = t;
+    if (S.stage.classList.contains("canvas")) {
+      if (Math.abs(S.bg.currentTime - t) > 0.25) S.bg.currentTime = t;
+      if (v.paused !== S.bg.paused) v.paused ? S.bg.pause() : S.bg.play().catch(() => {});
+    }
     S.el.querySelector(".tl-play").textContent = v.paused ? "▶" : "❚❚";
-    S.el.querySelector(".tl-time").textContent = `${fmt(outTime(t))} / ${fmt(S.total)}  （原片 ${fmt(t)}）`;
+    const sp = (S.st && S.st.speed) || 1;
+    S.el.querySelector(".tl-time").textContent = `${fmt(outTime(t) / sp)} / ${fmt(S.total / sp)}  （原片 ${fmt(t)}）`;
     S.inner.querySelector(".tl-head").style.left = (t * S.pxps) + "px";
     if (!v.paused) follow(t);
     overlay(t);
@@ -235,12 +290,12 @@
     if (ti.dataset.t !== tt) { ti.dataset.t = tt; ti.innerHTML = tt ? `<span>${esc(tt)}</span>` : ""; }
     // 字幕
     const sub = S.el.querySelector(".ov-sub");
-    const key = ph ? ph.id + "|" + JSON.stringify(S.emph[ph.id] || {}) : "";
+    const key = ph ? ph.id + "|" + shown(ph) + JSON.stringify(S.emph[ph.id] || {}) : "";
     if (sub.dataset.k !== key) {
       sub.dataset.k = key;
       if (!ph) sub.innerHTML = "";
       else {
-        let h = esc(clean(ph.text));
+        let h = esc(clean(shown(ph)));
         const e = S.emph[ph.id];
         if (e) for (const kw of e.keywords || []) { const c = esc(clean(kw)); if (c) h = h.replace(c, `<b style="color:${HEX[e.color] || HEX.yellow}">${c}</b>`); }
         sub.innerHTML = `<span>${h}</span>`;
@@ -357,7 +412,7 @@
           const i = S.phrases.findIndex(p => p.id === id), sp = spanOf(i);
           S.v.currentTime = side ? Math.max(sp[0], sp[1] - 0.6) : sp[0];
         };
-        const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); S.ctx.onDirty(); };
+        const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); remember(); S.ctx.onDirty(); };
         document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
         return;
       }
@@ -380,6 +435,9 @@
 
   function onKey(ev) {
     if (!S || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.querySelector("dialog[open]")) return;
+    const mod = ev.ctrlKey || ev.metaKey;
+    if (mod && (ev.key === "z" || ev.key === "Z")) { ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
+    if (mod && (ev.key === "y" || ev.key === "Y")) { ev.preventDefault(); redo(); return; }
     if (ev.code === "Space") { ev.preventDefault(); togglePlay(); }
     else if ((ev.key === "Delete" || ev.key === "Backspace") && S.sel != null) { ev.preventDefault(); toggleDelete(S.sel); }
     else if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
@@ -397,7 +455,7 @@
     const box = S.el.querySelector(".tl-props"), C = S.ctx;
     const p = S.phrases.find(x => x.id === S.sel);
     if (!p) {
-      box.innerHTML = `<h3>属性</h3><p class="muted">点时间线上的一句话来编辑。<br><br>成片约 <b>${fmt(S.total)}</b>，原片 ${fmt(S.dur)}。<br>
+      box.innerHTML = `<h3>属性</h3><p class="muted">点时间线上的一句话来编辑。<br><br>成片约 <b>${fmt(S.total / ((S.st && S.st.speed) || 1))}</b>，原片 ${fmt(S.dur)}。<br>
         保留 ${S.phrases.filter(x => !gone(x)).length} / ${S.phrases.length} 句。</p>`;
       return;
     }
@@ -406,6 +464,7 @@
     const opt = (o, v) => Object.entries(o).map(([k, n]) => `<option value="${k}" ${k === v ? "selected" : ""}>${n}</option>`).join("");
     box.innerHTML = `<h3>#${p.id} <span class="muted mono">${fmt(p.start)}–${fmt(p.end)}</span></h3>
       <p class="tl-text ${off ? "off" : ""}">${esc(p.text)}</p>
+      <label>字幕文字（改错字，只影响字幕显示）<input class="pp-text" value="${esc(shown(p))}"></label>
       <div class="row">
         <label><input type="checkbox" class="pp-keep" ${off ? "" : "checked"} ${p.filler ? "disabled" : ""}> 保留</label>
         <label><input type="checkbox" class="pp-hook" ${S.wp.hook === p.id ? "checked" : ""} ${off ? "disabled" : ""}> 开头钩子</label>
@@ -428,9 +487,17 @@
     q(".pp-keep").onchange = () => toggleDelete(p.id);
     q(".pp-hook").onchange = ev => { S.wp.hook = ev.target.checked ? p.id : null; touch(); };
     q(".pp-kw").onchange = ev => {
-      const kws = ev.target.value.split(/[,，、\s]+/).filter(Boolean).filter(k => p.text.includes(k)).slice(0, 2);
+      const kws = ev.target.value.split(/[,，、\s]+/).filter(Boolean).filter(k => shown(p).includes(k)).slice(0, 2);
       if (ev.target.value.trim() && !kws.length) alert("重点词必须是这句话里一字不差的词");
       setEmph(p.id, {keywords: kws, big: kws.length ? !!e.big : false}); touch();
+    };
+    q(".pp-text").onchange = ev => {
+      const v = ev.target.value.trim();
+      S.wp.text = S.wp.text || {};
+      if (!v || v === p.text.trim()) delete S.wp.text[String(p.id)]; else S.wp.text[String(p.id)] = v;
+      const e2 = S.emph[p.id];   // 改字后重点词不在句子里了就去掉
+      if (e2 && e2.keywords.some(k => !shown(p).includes(k))) setEmph(p.id, {keywords: e2.keywords.filter(k => shown(p).includes(k))});
+      touch();
     };
     q(".pp-color").onchange = ev => { setEmph(p.id, {color: ev.target.value}); touch(); };
     q(".pp-big").onchange = ev => {
@@ -445,5 +512,5 @@
     if (q(".pp-reset")) q(".pp-reset").onclick = () => { delete S.wp.trim[String(p.id)]; touch(); };
   }
 
-  window.Timeline = {mount, destroy, getPlan, active: () => !!S};
+  window.Timeline = {mount, destroy, getPlan, setSettings, active: () => !!S, currentTime: () => (S ? S.v.currentTime : 0)};
 })();

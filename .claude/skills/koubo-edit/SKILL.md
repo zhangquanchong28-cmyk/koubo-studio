@@ -52,6 +52,16 @@ SSL_CERT_FILE=/root/.ccr/ca-bundle.crt KOUBO_HOST=0.0.0.0 KOUBO_PORT=8765 KOUBO_
  "bgm": "upbeat|chill|hiphop|none", "notes": "思路"}
 ```
 - `count` 只对含阿拉伯数字的关键词有效；配图的句子不会再出大字。
+- 其他字段：
+  - `text`: {"句号": "改正后的整句"} —— 只改字幕显示的字（AI 出方案时会自动纠正同音错字，复核一下）。
+  - `trim`: {"句号": [入点秒, 出点秒]} —— 每句入出点微调，负数=提前/收短，每头 ±3 秒。
+  - `settings`: 全片设置（`settings.py` 有默认值和范围）：
+    `speed` 变速（口播常用 1.1～1.2）、`canvas` 比例（original/9:16/16:9/1:1/3:4，换比例自动模糊背景）、
+    `color` 调色（preset: none/fresh/warm/cool/film/bright + brightness/contrast/saturation/temp/sharpen）、
+    `sub` 字幕样式（size 倍数、pos 距底部%、style outline/box/shadow、color）、
+    `audio`（denoise 降噪、loudnorm 响度统一 -14 LUFS）、`fade`（in/out）、`export`（res original/1080/720，quality high/standard）。
+- 用户说"字幕有错字/改成 XX" → `text`；"加速一点" → `settings.speed`；"做成竖屏" → `settings.canvas`；
+  "字大一点/放上面一点/加底框" → `settings.sub`；"有杂音" → `settings.audio.denoise`。
 - 用户的话 → 改法：
   - "第 N 句删掉/留着" → 改 `delete`；"开头放那句 XX" → `hook`
   - "这个词标红/做成卡片/数字滚起来" → 对应句 emphasis 的 color / big+effect
@@ -65,6 +75,8 @@ SSL_CERT_FILE=/root/.ccr/ca-bundle.crt KOUBO_HOST=0.0.0.0 KOUBO_PORT=8765 KOUBO_
 - `kb broll <编号>`：有图库 Key 先搜免费图库，否则 AI 生图（每张约 $0.03～0.07），打印花费。
   一条 5 分钟视频超过 10 张图前先问用户。
 - `kb render <编号>` → `projects/<编号>/out/成片.mp4`、`字幕.srt`。
+
+- 封面：`kb cover <编号> [--at 原片秒] [--text "第一行\n第二行"]` → `out/封面.jpg`（默认取钩子句/第一个大字句的画面和标题）。
 
 ## 4. 交付前自查（必做）
 - `kb frames <编号>` 生成 8 格抽帧图，**用 Read 看图**；对疑点用 `--at 12.5,30` 精确抽帧。

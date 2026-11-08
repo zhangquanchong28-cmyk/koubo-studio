@@ -16,6 +16,8 @@ import pyJianYingDraft as jy
 
 import subprocess
 
+import settings as SET
+
 from common import find_tool
 from packer import (BGM_DIR, BGM_FILES, SFX_DIR, SFX_VOL, ZOOM_IN_SEC, ZOOM_TO,
                     _clean, broll_box, broll_events, build_events, build_timeline, probe)
@@ -111,10 +113,14 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
     if not ranges:
         raise RuntimeError("方案里没有要保留的内容。")
     # 剪映里按源时长拼接，时间线以微秒取整，避免累计误差
-    durs = [(_us(r["end"]) - _us(r["start"])) / US for r in ranges]
+    st = SET.of(plan)
+    sp = st["speed"]
+    # 剪映里片段长度 = round(原片长度 / 速度)，这里按同样方式取整，时间线才对得上
+    tl = [round((_us(r["end"]) - _us(r["start"])) / sp) for r in ranges]
+    durs = [d / US for d in tl]
     subs, pops, sfx, total = build_events(ranges, durs, plan)
     subs, pops = _no_overlap(subs), _no_overlap(pops)
-    total_us = sum(_us(r["end"]) - _us(r["start"]) for r in ranges)
+    total_us = sum(tl)
 
     folder = jy.DraftFolder(str(staging))
     script = folder.create_draft(name, W, H, fps=fps, allow_replace=True)
@@ -128,12 +134,14 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
     for r in ranges:
         s0 = _us(r["start"])
         d = _us(r["end"]) - s0
-        seg = jy.VideoSegment(mat, jy.Timerange(off, d), source_timerange=jy.Timerange(s0, d))
+        td = round(d / sp)
+        seg = jy.VideoSegment(mat, jy.Timerange(off, td), source_timerange=jy.Timerange(s0, d),
+                              speed=sp if sp != 1 else None)
         if r["zoom"]:
             seg.add_keyframe(jy.KeyframeProperty.uniform_scale, 0, 1.0)
-            seg.add_keyframe(jy.KeyframeProperty.uniform_scale, min(d, _us(ZOOM_IN_SEC)), ZOOM_TO)
+            seg.add_keyframe(jy.KeyframeProperty.uniform_scale, min(td, _us(ZOOM_IN_SEC)), ZOOM_TO)
         script.add_segment(seg, "口播")
-        off += d
+        off += td
 
     # 配图：单独一条视频轨，压在口播上面，可在剪映里直接替换图片
     n_img = 0
@@ -236,6 +244,8 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
             pos += d
     script.save()
     _color_keywords(Path(staging) / name / "draft_content.json", subs)
+    if st["canvas"] != "original" or st["color"]["preset"] != "none" or st["sub"] != SET.DEFAULT["sub"]:
+        log("提示：画面比例、调色、字幕样式这几项没有带进剪映草稿，请在剪映里设置（变速、改过的字幕文字已带上）。")
     log(f"草稿已生成：{len(ranges)} 段视频、{n_img} 张配图、{len(subs)} 条字幕、{len(pops)} 个大字、{len(placed)} 个音效")
     return Path(staging) / name
 

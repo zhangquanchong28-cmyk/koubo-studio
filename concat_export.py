@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import threading
 import time
+
+import settings as SET
 from pathlib import Path
 
 from packer import (BGM_DIR, BGM_FILES, SFX_DIR, SFX_VOL, ZOOM_IN_SEC, ZOOM_TO,
@@ -93,7 +95,9 @@ def export(src, data, plan, out_dir, name, concat_path="", log=print):
         log("提示：配图暂时不会带到 Concat，需要的话在 Concat 里手动加（图片在项目的 broll 文件夹里）。")
     meta = probe(src)
     W, H = meta["w"], meta["h"]
-    plan = dict(plan, hook=None)                     # 钩子暂不支持
+    if SET.of(plan) != SET.normalize({}):
+        log("提示：全片设置（变速、比例、调色、字幕样式等）暂时不会带到 Concat。")
+    plan = dict(plan, hook=None, settings={})        # 钩子、全片设置暂不支持
     ranges = build_timeline(data, plan)
     if not ranges:
         raise RuntimeError("方案里没有要保留的内容。")

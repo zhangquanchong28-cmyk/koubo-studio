@@ -9,6 +9,7 @@
   python koubo.py broll <编号> [--ids 3,8] [--force] [--source ai|stock|auto]   找配图
   python koubo.py render <编号>                                   出片 → projects/<编号>/out/成片.mp4
   python koubo.py frames <编号> [--at 1.5,10,22]                 抽帧拼图，给 Claude 自查画面
+  python koubo.py cover <编号> [--at 原片秒] [--text "封面文字"]    生成封面 out/封面.jpg
   python koubo.py jianying <编号>                                 生成剪映草稿目录
   python koubo.py pack  <编号>                                    打包「云端方案包.zip」→ 本地工作台导入后用原片出高清
   python koubo.py list                                            列出项目
@@ -147,6 +148,18 @@ def cmd_render(a):
     print(json.dumps(res, ensure_ascii=False))
 
 
+def cmd_cover(a):
+    data = _load(a.pid)
+    plan = json.loads(server._plan_path(a.pid).read_text(encoding="utf-8"))
+    t = a.at if a.at is not None else server.default_cover_time(data, plan)
+    out = server.pdir(a.pid) / "out" / "封面.jpg"
+    out.parent.mkdir(exist_ok=True)
+    packer.make_cover(server.source_of(a.pid), t, a.text if a.text is not None else plan.get("title", ""),
+                      plan, out, font=cfg()["font"])
+    server.update(a.pid, cover={"at": __import__("time").time(), "t": t})
+    print(f"封面：{out}")
+
+
 def cmd_frames(a):
     out = server.pdir(a.pid) / "out"
     video = out / "成片.mp4"
@@ -218,6 +231,8 @@ def main():
     p = sub.add_parser("broll"); p.add_argument("pid"); p.add_argument("--ids"); p.add_argument("--force", action="store_true")
     p.add_argument("--source", choices=["auto", "ai", "stock"])
     p = sub.add_parser("frames"); p.add_argument("pid"); p.add_argument("--at")
+    p = sub.add_parser("cover"); p.add_argument("pid"); p.add_argument("--at", type=float)
+    p.add_argument("--text", help="封面文字，用 \\n 换行；默认用标题")
     sub.add_parser("list")
     a = ap.parse_args()
     label = {"plan": "AI 出方案", "broll": "找配图", "render": "出片", "jianying": "导出剪映草稿",
