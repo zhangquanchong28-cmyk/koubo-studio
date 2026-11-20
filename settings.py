@@ -4,6 +4,12 @@
 import re
 
 CANVASES = {"original": None, "9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "3:4": (1080, 1440)}
+LAYOUTS = ["talk", "text"]          # talk=真人口播；text=纯文字视频（文字居中，背景自动生成）
+BACKGROUNDS = ["dark", "light"]     # 纯文字视频背景：深色渐变 / 浅色纸张
+SUB_IN = ["fade", "rise", "wipe", "pop", "blur", "type", "char", "bounce"]
+SUB_OUT = ["fade", "blur", "none"]
+KEYWORD_STYLES = ["color", "marker", "underline"]
+ACCENTS = ["yellow", "red", "blue", "orange", "green"]
 SUB_STYLES = ["soft", "shadow", "box", "outline"]   # soft=柔和阴影+极细半透明描边（默认，兼顾质感和复杂背景可读性）
 RESOLUTIONS = {"original": None, "1080": 1080, "720": 720}
 QUALITY_CRF = {"high": 18, "standard": 23}
@@ -22,6 +28,10 @@ COLOR_PRESETS = {
 
 DEFAULT = {
     "style": "",                 # 风格模板 key（styles.py），空=未指定
+    "layout": "talk",
+    "bg": "dark",
+    # 文字动画：正文入场/出场、重点词样式、主强调色、片头标题动画、片尾引导语动画
+    "fx": {"sub_in": "rise", "sub_out": "fade", "keyword": "color", "accent": "yellow", "intro": True, "outro": True},
     "speed": 1.0,
     "pause": 0.25,               # 句间保留的停顿（秒）；句末（。？！）再多留一点
     "canvas": "original",
@@ -48,7 +58,16 @@ def normalize(raw):
     out = {"style": str(raw.get("style") or "")[:20],
            "speed": round(_num(raw.get("speed"), 0.5, 2.0, 1.0), 2),
            "pause": round(_num(raw.get("pause"), 0.05, 1.0, DEFAULT["pause"]), 2),
-           "canvas": raw.get("canvas") if raw.get("canvas") in CANVASES else "original"}
+           "canvas": raw.get("canvas") if raw.get("canvas") in CANVASES else "original",
+           "layout": raw.get("layout") if raw.get("layout") in LAYOUTS else "talk",
+           "bg": raw.get("bg") if raw.get("bg") in BACKGROUNDS else "dark"}
+    x = raw.get("fx") if isinstance(raw.get("fx"), dict) else {}
+    d0 = DEFAULT["fx"]
+    out["fx"] = {"sub_in": x.get("sub_in") if x.get("sub_in") in SUB_IN else d0["sub_in"],
+                 "sub_out": x.get("sub_out") if x.get("sub_out") in SUB_OUT else d0["sub_out"],
+                 "keyword": x.get("keyword") if x.get("keyword") in KEYWORD_STYLES else d0["keyword"],
+                 "accent": x.get("accent") if x.get("accent") in ACCENTS else d0["accent"],
+                 "intro": bool(x.get("intro", True)), "outro": bool(x.get("outro", True))}
     c = raw.get("color") if isinstance(raw.get("color"), dict) else {}
     d = DEFAULT["color"]
     out["color"] = {

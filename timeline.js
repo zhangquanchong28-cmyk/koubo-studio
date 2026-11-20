@@ -12,7 +12,7 @@
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const fmt = t => { t = Math.max(0, t); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, "0")}`; };
-  const clean = t => String(t || "").replace(/[，。！？；、,.!?;：:]/g, " ").replace(/\s+/g, " ").trim();
+  const clean = t => String(t || "").replace(/(\d)\.(?=\d)/g, "$1\u2024").replace(/[，。！？；、,.!?;：:]/g, " ").replace(/\s+/g, " ").trim().replace(/\u2024/g, ".");
 
   // ------------------------------------------------------------ 方案读写
   function maps() {
@@ -229,7 +229,11 @@
     S.k = k;
     const st = S.stage.style;
     st.setProperty("--S", Sz + "px");
-    st.setProperty("--sub-b", (S.subPos ? S.subPos : (portrait ? 17 : 7)) + "%");
+    const textMode = (S.st && S.st.layout) === "text";
+    S.stage.classList.toggle("textmode", textMode);
+    S.stage.classList.toggle("light", textMode && S.st.bg === "light");
+    st.setProperty("--sub-b", textMode ? "44%" : (S.subPos ? S.subPos : (portrait ? 26 : 8)) + "%");
+    st.setProperty("--subk", textMode ? 1.6 : 1);
     st.setProperty("--pop-t", (portrait ? 27 : 16) + "%");
     st.setProperty("--title-t", (portrait ? 7 : 5) + "%");
   }
@@ -321,7 +325,15 @@
       else {
         let h = esc(clean(piece));
         const e = S.emph[ph.id];
-        if (e) for (const kw of e.keywords || []) { const c = esc(clean(kw)); if (c) h = h.replace(c, `<b style="color:${HEX[e.color] || HEX.yellow}">${c}</b>`); }
+        const kst = (S.st && S.st.fx && S.st.fx.keyword) || "color";
+        if (e) for (const kw of e.keywords || []) {
+          const c = esc(clean(kw)), col = HEX[e.color] || HEX.yellow;
+          if (!c) continue;
+          const dark = ["yellow", "orange", "green"].includes(e.color) ? "#151515" : "#fff";
+          const css = kst === "marker" ? `background:${col};color:${dark};border-radius:.15em;padding:0 .12em;-webkit-text-stroke:0;text-shadow:none`
+            : kst === "underline" ? `color:${col};box-shadow:inset 0 -.12em 0 ${col}` : `color:${col}`;
+          h = h.replace(c, `<b class="kw-${kst}" style="${css}">${c}</b>`);
+        }
         sub.innerHTML = `<span>${h}</span>`;
       }
     }

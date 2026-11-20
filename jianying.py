@@ -170,7 +170,8 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
 
     S = round(min(W, H) * 0.058)
     portrait = H >= W
-    y_sub = H - round(H * (0.17 if portrait else 0.07)) - S * 0.6
+    pos = st["sub"]["pos"] / 100 if st["sub"]["pos"] else (0.26 if portrait else 0.08)
+    y_sub = H - round(H * pos) - S * 0.6
     y_pop = round(H * (0.27 if portrait else 0.16)) + S * 1.1
     y_title = round(H * (0.07 if portrait else 0.05)) + S * 0.6
 
@@ -180,11 +181,22 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
 
     subs = [x for x in subs if _us(x["a"]) < total_us - 50_000]
     pops = [x for x in pops if _us(x["a"]) < total_us - 50_000]
+    # 字幕入场/出场：映射到剪映自带的同类文字动画
+    intro = {"fade": "渐显", "rise": "向上滑动", "wipe": "羽化向右擦开", "pop": "轻微放大", "blur": "模糊",
+             "type": "打字光标", "char": "逐字显影", "bounce": "逐字弹跳"}.get(st["fx"]["sub_in"])
+    outro = {"fade": "渐隐", "blur": "模糊"}.get(st["fx"]["sub_out"])
     for s in subs:
         seg = jy.TextSegment(_clean(s["text"]), trange(s["a"], s["b"]),
                              style=jy.TextStyle(size=_size(S, H), bold=True, align=1),
-                             border=jy.TextBorder(color=(0, 0, 0), width=40),
+                             shadow=jy.TextShadow(alpha=0.5, color=(0, 0, 0), diffuse=12, distance=4),
                              clip_settings=jy.ClipSettings(transform_y=_ty(y_sub, H)))
+        dur = s["b"] - s["a"]
+        for anim, kind in ((intro, jy.TextIntro), (outro, jy.TextOutro)):
+            if anim and dur > 0.6 and anim in kind.__members__:
+                try:
+                    seg.add_animation(kind[anim], 0.25 if kind is jy.TextIntro else 0.2)
+                except Exception:
+                    pass
         script.add_segment(seg, "字幕")
 
     for p in pops:
@@ -244,6 +256,10 @@ def build_draft(src, data, plan, staging, name, log=print, broll_dir=None):
             pos += d
     script.save()
     _color_keywords(Path(staging) / name / "draft_content.json", subs)
+    if st["layout"] == "text":
+        log("提示：纯文字视频的居中版式、自动背景没有带进剪映草稿（剪映里是普通字幕排版）。")
+    if plan.get("points") or plan.get("ending") or plan.get("title"):
+        log("提示：分点卡片、片头标题动画、片尾引导语是出片引擎特效，剪映草稿里不包含，请在剪映里用模板补。")
     if st["canvas"] != "original" or st["color"]["preset"] != "none" or st["sub"] != SET.DEFAULT["sub"]:
         log("提示：画面比例、调色、字幕样式这几项没有带进剪映草稿，请在剪映里设置（变速、改过的字幕文字已带上）。")
     log(f"草稿已生成：{len(ranges)} 段视频、{n_img} 张配图、{len(subs)} 条字幕、{len(pops)} 个大字、{len(placed)} 个音效")

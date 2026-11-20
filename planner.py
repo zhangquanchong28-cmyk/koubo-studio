@@ -13,7 +13,7 @@ import styles
 SFX_KINDS = ["whoosh", "hit", "ding", "pop", "type", "page", "sparkle", "tick", "none"]
 COLORS = ["yellow", "red", "blue", "orange", "green"]
 BGM_KINDS = ["upbeat", "chill", "hiphop", "none"]
-EFFECTS = ["pop", "count", "card"]
+EFFECTS = ["pop", "count", "card", "glow", "stack", "type"]
 LAYOUTS = ["pip", "full", "corner"]
 IMG_NAME = re.compile(r"^[\w\-]{1,60}\.(?:jpg|jpeg|png|webp)$")
 
@@ -32,7 +32,9 @@ SYSTEM_PROMPT = """你是一名资深短视频口播剪辑师。你只负责做"
    - keywords：该句最该被记住的 1～2 个词（数字、结论、反转词、核心概念），必须是句子里一字不差的连续片段，2～8 个字。
    - color：yellow=金色（普通重点）、red=正红（警示/风险/负面）、blue=深蓝（数据/政策/科技）、orange=橙（成长/干货重点）、green=青绿（正向/增长）。
      全片高亮色不超过 2 种（按风格的配色要求）。
-   - big=true：关键词在画面中上方单独出现（最强视觉），配合 effect：pop=放大弹出；count=数字滚动（只用于含阿拉伯数字的词，如"3000元""95%"）；card=3D 色卡（核心概念/结论/反转）。别连续两次用同一种。
+   - big=true：关键词在画面中上方单独出现（最强视觉），配合 effect：pop=放大弹出；count=数字滚动（只用于含阿拉伯数字的词，如"3000元""95%"）；
+     card=3D 色卡（核心概念/结论）；glow=发光字（金句、情绪）；stack=叠影立体字（强观点、反转、钩子）；type=打字机逐字打出（定义、清单标题、慢节奏）。
+     只用风格允许的效果，别连续两次用同一种。
    - zoom=true：这一句镜头缓慢推近，用在情绪/重点句，不要连续两句都推。
    - sfx：音效只配关键词和大字，正文不加。ding=提示/结论，pop=轻快弹出，type=打字/列举，page=翻页/下一点，tick=数字/时间，sparkle=美好，hit=重音（只用于开头钩子或强反转），whoosh=转场，none=不加。同一种不连用超过 3 次。
 4. title：顶部常驻标题，≤14 个字，概括视频核心卖点；不适合就留空字符串。
@@ -41,14 +43,21 @@ SYSTEM_PROMPT = """你是一名资深短视频口播剪辑师。你只负责做"
    - desc：中文一句话说明画面。query：2～4 个英文单词（免费图库搜索用）。
    - prompt：英文生图提示词，写实摄影风格（主体、场景、光线、构图），结尾加 "photorealistic, no text, no watermark"；不要真实名人、品牌 logo、文字。
    - layout：pip=画中画（竖屏放在人物胸前、字幕上方，不挡脸，默认）；full=全屏（全片最多 2 次）；corner=右上角小窗。
-6. 字幕纠错（text）：转写常有同音错字（如"减触高级感"→"剪出高级感"、"简映"→"剪映"、"对其"→"对齐"）。只改明显的错别字，不改说法、不润色，改后字数尽量一致；没错就不列。格式 {"编号": "改正后的整句"}。重点词按改正后的句子选。
-7. bgm：upbeat=轻快，chill=舒缓沉稳，hiphop=有态度，none=严肃话题不要音乐。只用纯音乐，程序会把音乐压在人声之下并在说话时自动避让。
+6. 分点卡片（points）：说话人列举并列要点时（"第一/第二/第三""首先/其次/最后""一是/二是""1、2、3"），把它做成一组编号卡片。
+   - 每组 2～6 个要点；items 里的 id 是"开始讲这一点"的那句编号，text 是这一点的概括，≤12 个字，不要照抄整句。
+   - title 是这组的小标题（≤10 字，如"效率翻倍3个习惯"），没有就留空。卡片出现期间不要给这些句子 big。
+   - 没有列举就填 []。
+7. 结尾引导（ending）：片尾 2 秒出现的一句关注引导，≤14 个字，要和内容主题相关（如"关注我，每天一个效率技巧"）；严肃/负面话题可以留空。
+8. 字幕纠错（text）：转写常有同音错字（如"减触高级感"→"剪出高级感"、"简映"→"剪映"、"对其"→"对齐"）。只改明显的错别字，不改说法、不润色，改后字数尽量一致；没错就不列。格式 {"编号": "改正后的整句"}。重点词按改正后的句子选。
+9. bgm：upbeat=轻快，chill=舒缓沉稳，hiphop=有态度，none=严肃话题不要音乐。只用纯音乐，程序会把音乐压在人声之下并在说话时自动避让。
 
 ## 输出
 只输出一个 JSON 对象，不要任何其他文字：
 {"style": "风格key", "title": "...", "hook": 编号或null, "delete": [编号...],
  "emphasis": [{"id": 编号, "keywords": ["..."], "color": "yellow", "big": false, "effect": "pop", "zoom": false, "sfx": "none"}],
  "broll": [{"id": 编号, "desc": "...", "query": "...", "prompt": "...", "layout": "pip"}],
+ "points": [{"title": "小标题", "items": [{"id": 编号, "text": "要点概括"}]}],
+ "ending": "结尾引导语",
  "text": {"编号": "改正错别字后的整句"},
  "bgm": "chill", "notes": "一句话说明你的剪辑思路（含你判断的赛道）"}"""
 
@@ -171,6 +180,10 @@ REVISE_PROMPT = """
 - 用户说的"第 N 句"指编号 N。用户按"第几秒"说位置时，按句子开始时间找最接近的编号。
 - 新加或改了描述的配图：image 留空字符串，程序会重新找图。
 - 用户要改字幕上的字（错别字、换说法）：写进 text，{"编号": "整句新文字"}。
+- 分点卡片在 points，结尾引导语在 ending；用户说"这几点做成卡片""结尾加一句关注"就改这两项。
+- 全片设置里的版式和动画：layout（talk 真人口播 / text 纯文字视频）、bg（dark/light）、
+  fx：sub_in 正文入场（fade/rise/wipe/pop/blur/type/char/bounce）、sub_out（fade/blur/none）、keyword 重点词样式（color/marker/underline）、
+  accent 主强调色、intro 片头标题动画、outro 片尾引导动画。
 - 全片设置在 settings 里：speed 整体变速（1.0～1.5），canvas 画面比例（original/9:16/16:9/1:1/3:4），
   color 调色（preset: none/fresh/warm/cool/film/bright，brightness -0.3～0.3，contrast 0.5～1.8，saturation 0～2，temp 色温 3000～10000，sharpen 0～1.5），
   sub 字幕样式（size 0.6～1.8 倍，pos 距底部百分比 0=自动，style: outline/box/shadow，color 十六进制），
@@ -311,6 +324,27 @@ def sanitize(raw, data):
             continue
         if pid in by_id and (ds or de):
             trim[str(pid)] = [ds, de]
+    points = []
+    for g in raw.get("points") or []:
+        if not isinstance(g, dict):
+            continue
+        items, used_ids = [], set()
+        for it in g.get("items") or []:
+            pid = _int(it.get("id")) if isinstance(it, dict) else None
+            txt = str((it or {}).get("text") or "").strip()[:16] if isinstance(it, dict) else ""
+            if pid in by_id and pid not in delete and pid not in used_ids and txt:
+                used_ids.add(pid)
+                items.append({"id": pid, "text": txt})
+        if 2 <= len(items) <= 8:
+            items.sort(key=lambda x: x["id"])
+            grp = {"title": str(g.get("title") or "").strip()[:14], "items": items}
+            if g.get("color") in COLORS:
+                grp["color"] = g["color"]
+            points.append(grp)
+    in_points = {it["id"] for g in points for it in g["items"]}
+    for e in emph:                       # 分点卡片出现的句子不弹大字
+        if e["id"] in in_points:
+            e["big"] = False
     for e in emph:                       # 配图的句子不再弹大字，避免画面打架
         if e["id"] in bseen:
             e["big"] = False
@@ -322,6 +356,8 @@ def sanitize(raw, data):
         "broll": sorted(broll, key=lambda x: x["id"]),
         "trim": trim,
         "text": fixes,
+        "points": points,
+        "ending": str(raw.get("ending") or "").strip()[:18],
         "settings": SET.normalize(raw.get("settings")),
         "bgm": raw.get("bgm") if raw.get("bgm") in BGM_KINDS else "upbeat",
         "notes": str(raw.get("notes") or ""),

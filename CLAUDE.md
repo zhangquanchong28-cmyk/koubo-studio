@@ -19,6 +19,7 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 - 语音模型 faster-whisper medium（约 1.5GB）第一次转写时自动下载；HF 下不动会自动换 hf-mirror.com。
 - AI（方案 + 生图）走 OpenRouter。云端环境里 Key 由网络代理注入，代码里的占位符是 `proxy-injected`，
   **永远不要让用户把 Key 贴进聊天**；没配好就用 request_credential 让用户在安全表单里填（host: openrouter.ai）。
+- 原片可以是录音（mp3/m4a/wav）：没有画面时自动做成纯文字视频。
 - 观看模式：用户能在 App 右侧预览窗实时看你操作，启动方式见技能文件「打开观看模式」。
 - Python 走代理时如遇证书错误：`export SSL_CERT_FILE=/root/.ccr/ca-bundle.crt`（只在云端容器里需要）。
 
@@ -32,7 +33,8 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 | `settings.py` | 全片设置（变速、停顿、比例、调色、字幕样式、音量、导出）默认值与校验 |
 | `timeline.js` | 网页时间线编辑器（实时预览、多轨、属性面板、撤销重做） |
 | `fonts/` | 内置思源黑体 Medium/Bold/Heavy（SIL OFL，可商用），出片和网页预览都用它 |
-| `packer.py` | 出片引擎：剪切、推近、ASS 动态字幕、数字滚动、3D 卡片、配图叠加、音效、BGM |
+| `packer.py` | 出片引擎：剪切、推近、字幕拆条（jieba 按词断）、配图叠加、纯文字视频背景、音效、BGM |
+| `typo.py` | 文字排版与动画：字幕入场/出场、划重点、大字花字、片头标题、片尾引导、分点卡片、口播/纯文字两套版式 |
 | `broll.py` | 配图：Pexels / Pixabay 免费图库（可选 Key）+ OpenRouter AI 生图 |
 | `jianying.py` + `windows_draft.py` | 剪映草稿导出（windows_draft 来自 video-shotcraft，Apache-2.0） |
 | `concat_export.py` | 【实验，未实测】导出到开源剪辑器 Concat |

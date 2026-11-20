@@ -27,6 +27,7 @@ SSL_CERT_FILE=/root/.ccr/ca-bundle.crt KOUBO_HOST=0.0.0.0 KOUBO_PORT=8765 KOUBO_
 - 用户可以试试直接把原片拖进页面上传（不受聊天 30MB 限制的可能性较大，但未验证；不行就走压缩代理）。
 
 ## 1. 收视频
+- 用户只有录音（mp3/m4a）也能做：`kb new 录音.mp3`，出片时自动是纯文字视频。
 - 网页上传单文件上限 30MB。用户原片大（一般 3GB 以内、5 分钟以内）时，让用户在本地把原片拖到
   **`压缩代理.bat`** 上，得到 `xxx_上传版.mp4`（或 `_第1段/_第2段…`），按顺序发给你。
 - 多段按顺序一次导入：`kb new 第1段.mp4 第2段.mp4 --name 原片名.mp4`（会无损拼接，时间轴与原片一致）。
@@ -64,6 +65,14 @@ SSL_CERT_FILE=/root/.ccr/ca-bundle.crt KOUBO_HOST=0.0.0.0 KOUBO_PORT=8765 KOUBO_
     `color` 调色（preset: none/fresh/warm/cool/film/bright + brightness/contrast/saturation/temp/sharpen）、
     `sub` 字幕样式（size 倍数、pos 距底部%、style outline/box/shadow、color）、
     `audio`（denoise 降噪、loudnorm 响度统一 -14 LUFS）、`fade`（in/out）、`export`（res original/1080/720，quality high/standard）。
+  - `points`: [{"title": "小标题", "items": [{"id": 句号, "text": "≤12字要点"}]}] —— 分点卡片（编号卡片依次滑入+打字机）。
+  - `ending`: "关注我，……" —— 片尾引导语（最后约 2.6 秒逐字弹出）。
+  - `settings.layout`: talk（真人口播）/ text（纯文字视频：文字居中、背景自动生成，`settings.bg` dark/light）。
+  - `settings.fx`: sub_in 字幕入场（fade/rise/wipe/pop/blur/type/char/bounce）、sub_out（fade/blur/none）、
+    keyword 重点词（color 变色放大 / marker 底色划重点 / underline 下划线）、accent 强调色、intro 片头标题动画、outro 片尾引导动画。
+  - 大字 effect 还有 glow 发光字、stack 叠影立体、type 打字机。
+- 用户说"做成纯文字视频" → `settings.layout = text`；"这几点做成卡片" → `points`；"结尾加关注" → `ending`；
+  "字幕动画换成打字机/逐字" → `settings.fx.sub_in`；"重点词用划线/底色" → `settings.fx.keyword`。
 - 用户说"字幕有错字/改成 XX" → `text`；"加速一点" → `settings.speed`；"做成竖屏" → `settings.canvas`；
   "字大一点/放上面一点/加底框" → `settings.sub`；"有杂音" → `settings.audio.denoise`。
 - 用户的话 → 改法：

@@ -85,7 +85,13 @@ details.sets>summary{cursor:pointer;font-weight:600;font-size:16px}
 .tl-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:50% 35%}
 .tl-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scale(1.15);display:none}
 .tl-stage.canvas .tl-bg{display:block}
-.ov-sub span{font-size:calc(var(--S) * var(--subscale,1)) !important;color:var(--subcolor,#fff) !important}
+.ov-sub span{font-size:calc(var(--S) * var(--subscale,1) * var(--subk,1)) !important;color:var(--subcolor,#fff)}
+.tl-stage.textmode .tl-video{opacity:0}
+.tl-stage.textmode{background:radial-gradient(circle at 50% 40%,#22343a,#0b1113)}
+.tl-stage.textmode.light{background:#f2ede4}
+.tl-stage.textmode.light .ov-sub span{color:#222 !important;-webkit-text-stroke:0;text-shadow:none}
+.tl-stage.textmode .ov-sub span{font-weight:700}
+.ov-sub b.kw-color{animation:kwpop .3s ease-out forwards}
 .tl-stage[data-substyle=box] .ov-sub span{-webkit-text-stroke:0;text-shadow:none;background:rgba(0,0,0,.62);padding:.1em .3em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .tl-stage[data-substyle=shadow] .ov-sub span{-webkit-text-stroke:0;text-shadow:0 2px 6px rgba(0,0,0,.75)}
 .tl-stage[data-substyle=soft] .ov-sub span{-webkit-text-stroke:calc(var(--S)/32) rgba(0,0,0,.45);text-shadow:0 calc(var(--S)/14) calc(var(--S)/8) rgba(0,0,0,.55)}
@@ -93,7 +99,7 @@ details.sets>summary{cursor:pointer;font-weight:600;font-size:16px}
 .ov{position:absolute;left:0;right:0;pointer-events:none;text-align:center}
 .ov-sub{bottom:var(--sub-b);padding:0 6%}
 .ov-sub span{font-size:var(--S);font-weight:500;color:#fff;-webkit-text-stroke:calc(var(--S)/18) #000;paint-order:stroke fill;text-shadow:0 1px 3px rgba(0,0,0,.6)}
-.ov-sub b{display:inline-block;font-weight:700;animation:kwpop .3s ease-out forwards}
+.ov-sub b{display:inline-block;font-weight:700}
 .ov-title{top:var(--title-t)}
 .ov-title span{display:inline-block;font-size:calc(var(--S)*1.1);font-weight:700;color:#fff;background:rgba(0,0,0,.47);padding:calc(var(--S)*.2) calc(var(--S)*.35)}
 .ov-pop{top:var(--pop-t)}
@@ -157,8 +163,8 @@ details.sets>summary{cursor:pointer;font-weight:600;font-size:16px}
 </header>
 <div class="wrap">
   <aside>
-    <div class="drop" id="drop">把口播视频拖到这里<br><small>或</small><br>
-      <input type="file" id="file" accept="video/*" style="max-width:100%"></div>
+    <div class="drop" id="drop">把口播视频（或录音）拖到这里<br><small>或</small><br>
+      <input type="file" id="file" accept="video/*,audio/*" style="max-width:100%"></div>
     <div class="row" style="margin-bottom:12px">
       <input id="path" placeholder="或粘贴视频完整路径（不复制，适合大文件）" style="flex:1;min-width:0">
       <button onclick="openPath()">打开</button>
@@ -215,11 +221,14 @@ const $ = s => document.querySelector(s);
 const SFX = {none:"无", whoosh:"转场·刷", hit:"重音·咚", ding:"提示·叮", pop:"弹出·啵", type:"打字", page:"翻页", sparkle:"闪光", tick:"计时"};
 const COLORS = {yellow:"金", red:"红", blue:"深蓝", orange:"橙", green:"青绿"};
 let STYLES = {};
-const BIGFX = {"":"—", pop:"弹出", count:"数字滚动", card:"3D卡片"};
+const BIGFX = {"":"—", pop:"弹出", count:"数字滚动", card:"3D卡片", glow:"发光字", stack:"叠影立体", type:"打字机"};
+const SUB_IN = {fade:"渐显", rise:"向上滑入", wipe:"向右擦开", pop:"轻微放大", blur:"模糊入场", type:"打字光标", char:"逐字显影", bounce:"逐字弹跳"};
+const SUB_OUT = {fade:"渐隐", blur:"模糊消散", none:"无"};
+const KW_STYLE = {color:"变色放大", marker:"底色划重点", underline:"下划线擦出"};
 const LAYOUT = {"":"—", pip:"画中画", full:"全屏", corner:"小窗"};
 const BGM = {upbeat:"轻快", chill:"舒缓", hiphop:"节奏感", none:"不要音乐"};
 let cur = null, st = null, dirty = false, timer = null;
-let ws = null, wt = null;   // 正在编辑的全片设置、字幕改字
+let ws = null, wt = null, wpts = null, wend = "";   // 正在编辑的全片设置、字幕改字
 let view = (() => { try { return localStorage.getItem("koubo_view") || "table"; } catch (e) { return "table"; } })();
 
 async function api(path, opt = {}) {
@@ -330,7 +339,8 @@ function render() {
       ${plan ? `<p class="muted" style="margin:8px 0 0">💡 ${esc(plan.notes || "")}${plan.usage ? ` <span class="tag">本次约 $${plan.usage.usd}</span>` : ""}</p>` : ""}</div>`;
   }
   if (t && plan) {
-    if (!dirty || !ws) { ws = normSet(plan.settings); wt = Object.assign({}, plan.text || {}); }
+    if (!dirty || !ws) { ws = normSet(plan.settings); wt = Object.assign({}, plan.text || {});
+      wpts = JSON.parse(JSON.stringify(plan.points || [])); wend = plan.ending || ""; }
     h += chatBox() + settingsCard() + (view === "timeline" ? timelineCard() : planEditor(t, plan));
   }
   if (st.result) {
@@ -390,7 +400,10 @@ const PRESET_NAMES = {none: "原图", base: "口播基础", fresh: "清新", war
 function normSet(x) {
   x = x || {};
   const c = x.color || {}, sb = x.sub || {}, a = x.audio || {}, f = x.fade || {}, e = x.export || {};
+  const fx = x.fx || {};
   return {style: x.style || "", speed: x.speed || 1, pause: x.pause ?? 0.25, canvas: x.canvas || "original",
+    layout: x.layout || "talk", bg: x.bg || "dark",
+    fx: Object.assign({sub_in: "rise", sub_out: "fade", keyword: "color", accent: "yellow", intro: true, outro: true}, fx),
     color: Object.assign({preset: "none", vignette: 0}, COLOR_PRESETS.none, c),
     sub: Object.assign({size: 1, pos: 0, style: "soft", color: "#FFFFFF", max_chars: 10}, sb),
     audio: Object.assign({denoise: false, loudnorm: true, sfx: 0.7, bgm: 0, duck: true}, a),
@@ -407,6 +420,8 @@ function applyStyle() {
   if (window.Timeline && Timeline.active()) Timeline.setSettings(ws);
 }
 function setS(path, v) {   // path 如 "color.temp"
+  if (path === "layout") { ws.layout = v; markDirty(); const box = $("#setbox"); if (box) box.outerHTML = settingsCard(true);
+    if (window.Timeline && Timeline.active()) Timeline.setSettings(ws); return; }
   const ks = path.split("."); let o = ws;
   for (const k of ks.slice(0, -1)) o = o[k];
   o[ks[ks.length - 1]] = v;
@@ -442,6 +457,26 @@ function sel(path, label, opts, num) {
   return `<label><span>${label}</span><select onchange="setS('${path}', ${num ? "+this.value" : "this.value"})">
     ${Object.entries(opts).map(([k, n]) => `<option value="${k}" ${String(v) === String(k) ? "selected" : ""}>${n}</option>`).join("")}</select></label>`;
 }
+function pointsEditor() {
+  const pts = (wpts || []);
+  const groups = pts.map((g, gi) => `<div style="border-top:1px dashed var(--line);padding-top:6px;margin-top:6px">
+      <label><span>小标题</span><input value="${esc(g.title || "")}" oninput="editPts(${gi}, 'title', this.value)" style="flex:1"></label>
+      <textarea rows="${Math.max(2, g.items.length)}" oninput="editPts(${gi}, 'items', this.value)" title="每行一条：句号 要点文字">${esc(g.items.map(it => `${it.id} ${it.text}`).join("\n"))}</textarea>
+      <button class="mini" onclick="editPts(${gi}, 'del')">删除这组</button></div>`).join("");
+  return `<label><span>结尾引导</span><input value="${esc(wend || "")}" placeholder="如：关注我，每天一个效率技巧" oninput="wend = this.value; markDirty()" style="flex:1"></label>
+    ${groups || '<p class="muted" style="font-size:12px">AI 发现说话人列举要点时会自动生成。</p>'}
+    <button class="mini" onclick="editPts(-1, 'add')">＋ 加一组分点卡片</button>
+    <p class="muted" style="font-size:12px;margin:4px 0 0">每行一条：「句号 要点文字」，句号是开始讲这一点的那句。</p>`;
+}
+function markDirty() { dirty = true; const b = $("#saveBtn"); if (b) b.textContent = "保存方案 *"; }
+function editPts(gi, what, v) {
+  wpts = wpts || [];
+  if (what === "add") { wpts.push({title: "", items: []}); const box = $("#setbox"); if (box) box.outerHTML = settingsCard(true); markDirty(); return; }
+  if (what === "del") { wpts.splice(gi, 1); const box = $("#setbox"); if (box) box.outerHTML = settingsCard(true); markDirty(); return; }
+  if (what === "title") wpts[gi].title = v;
+  if (what === "items") wpts[gi].items = v.split("\n").map(l => l.trim().match(/^(\d+)\s+(.+)$/)).filter(Boolean).map(m => ({id: +m[1], text: m[2]}));
+  markDirty();
+}
 function chk(path, label) {
   const v = path.split(".").reduce((o, k) => o[k], ws);
   return `<label><input type="checkbox" ${v ? "checked" : ""} onchange="setS('${path}', this.checked)"> ${label}</label>`;
@@ -454,6 +489,14 @@ function settingsCard(open) {
     <div class="row" style="margin-top:10px"><button onclick="applyStyle()">套用当前风格的预设</button>
       <span class="muted" style="font-size:12px">风格在「① AI 剪辑方案」里选；换了风格重新出方案会自动套用。</span></div>
     <div class="sgrid">
+      <div class="sbox"><h4>版式与文字动画</h4>
+        ${sel("layout", "版式", {talk: "真人口播", text: "纯文字视频"})}
+        ${ws.layout === "text" ? sel("bg", "背景", {dark: "深色渐变", light: "浅色纸张"}) : ""}
+        ${sel("fx.sub_in", "字幕入场", SUB_IN)}${sel("fx.sub_out", "字幕出场", SUB_OUT)}
+        ${sel("fx.keyword", "重点词", KW_STYLE)}${sel("fx.accent", "强调色", COLORS)}
+        ${chk("fx.intro", "片头：大标题入场后缩到顶部")}${chk("fx.outro", "片尾：引导语逐字弹出")}
+        <p class="muted" style="font-size:12px;margin:4px 0 0">纯文字视频：文字居中放大、背景自动生成，原片可以是视频也可以是录音。</p></div>
+      <div class="sbox"><h4>分点卡片 / 结尾引导</h4>${pointsEditor()}</div>
       <div class="sbox"><h4>节奏与画面</h4>
         ${sel("speed", "变速", {"1": "1.0× 原速", "1.05": "1.05×", "1.1": "1.1×（推荐）", "1.15": "1.15×", "1.2": "1.2×", "1.25": "1.25×", "1.3": "1.3×", "1.5": "1.5×"}, true)}
         ${rng("pause", "句间停顿", 0.05, 0.8, 0.05)}
@@ -576,6 +619,8 @@ function clearHook() { document.querySelectorAll(".hook").forEach(r => r.checked
 async function savePlan() {
   const plan = view === "timeline" && window.Timeline && Timeline.active() ? Timeline.getPlan() : collect();
   plan.settings = ws || normSet(st.plan.settings);
+  plan.points = wpts || st.plan.points || [];
+  plan.ending = wend ?? (st.plan.ending || "");
   try { const j = await post(`/api/p/${cur}/save`, {plan}); dirty = false; st.plan = j.plan; render(); } catch (e) { alert(e.message); }
 }
 function brollCell(p, b) {
