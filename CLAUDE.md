@@ -27,7 +27,11 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 |---|---|
 | `koubo.py` | 云端命令行：new / plan / show / check / broll / render / frames / jianying / pack / list |
 | `asr.py` | faster-whisper 逐字时间戳 → 短句；繁体自动转简体、怪标点规范化 |
-| `planner.py` | Claude 出剪辑方案（JSON）；系统提示词内置晨晨方法论 + 自动拼入 `经验/我的经验.md` |
+| `planner.py` | Claude 出剪辑方案（JSON）；通用原则 + 风格规则 + 自动拼入 `经验/我的经验.md` |
+| `styles.py` | 风格模板（财经/民生/知识/故事/大字报/晨晨精剪）：AI 剪辑规则 + 全片设置预设 |
+| `settings.py` | 全片设置（变速、停顿、比例、调色、字幕样式、音量、导出）默认值与校验 |
+| `timeline.js` | 网页时间线编辑器（实时预览、多轨、属性面板、撤销重做） |
+| `fonts/` | 内置思源黑体 Medium/Bold/Heavy（SIL OFL，可商用），出片和网页预览都用它 |
 | `packer.py` | 出片引擎：剪切、推近、ASS 动态字幕、数字滚动、3D 卡片、配图叠加、音效、BGM |
 | `broll.py` | 配图：Pexels / Pixabay 免费图库（可选 Key）+ OpenRouter AI 生图 |
 | `jianying.py` + `windows_draft.py` | 剪映草稿导出（windows_draft 来自 video-shotcraft，Apache-2.0） |

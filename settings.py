@@ -4,13 +4,15 @@
 import re
 
 CANVASES = {"original": None, "9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "3:4": (1080, 1440)}
-SUB_STYLES = ["outline", "box", "shadow"]
+SUB_STYLES = ["soft", "shadow", "box", "outline"]   # soft=柔和阴影+极细半透明描边（默认，兼顾质感和复杂背景可读性）
 RESOLUTIONS = {"original": None, "1080": 1080, "720": 720}
 QUALITY_CRF = {"high": 18, "standard": 23}
 
 # 滤镜预设：直接给出各项数值（网页上选预设就是把滑块拨到这些值）
 COLOR_PRESETS = {
     "none": {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0, "temp": 6500, "sharpen": 0.0},
+    # 口播基础：亮度+5 对比+3 饱和-2 锐化+8（手册里的通用参数，换算成 ffmpeg 数值）
+    "base": {"brightness": 0.02, "contrast": 1.03, "saturation": 0.98, "temp": 6500, "sharpen": 0.4},
     "fresh": {"brightness": 0.03, "contrast": 1.02, "saturation": 1.12, "temp": 6900, "sharpen": 0.3},
     "warm": {"brightness": 0.02, "contrast": 1.02, "saturation": 1.06, "temp": 5300, "sharpen": 0.2},
     "cool": {"brightness": 0.0, "contrast": 1.04, "saturation": 0.98, "temp": 7800, "sharpen": 0.2},
@@ -19,11 +21,15 @@ COLOR_PRESETS = {
 }
 
 DEFAULT = {
+    "style": "",                 # 风格模板 key（styles.py），空=未指定
     "speed": 1.0,
+    "pause": 0.25,               # 句间保留的停顿（秒）；句末（。？！）再多留一点
     "canvas": "original",
-    "color": dict(COLOR_PRESETS["none"], preset="none"),
-    "sub": {"size": 1.0, "pos": 0, "style": "outline", "color": "#FFFFFF"},   # pos=0 表示自动
-    "audio": {"denoise": False, "loudnorm": True},
+    "color": dict(COLOR_PRESETS["none"], preset="none", vignette=0.0),
+    # pos=0 表示自动；max_chars=每行最多字数，超过就按时间拆成几条字幕
+    "sub": {"size": 1.0, "pos": 0, "style": "soft", "color": "#FFFFFF", "max_chars": 10},
+    # sfx=音效音量倍数；bgm=背景音乐音量（0=用设置里的默认）；duck=说话时自动压低音乐
+    "audio": {"denoise": False, "loudnorm": True, "sfx": 0.7, "bgm": 0.0, "duck": True},
     "fade": {"in": False, "out": True},
     "export": {"res": "original", "quality": "high"},
 }
@@ -39,7 +45,9 @@ def _num(v, lo, hi, default):
 def normalize(raw):
     """把任意输入校正成合法设置（缺的用默认值）。"""
     raw = raw if isinstance(raw, dict) else {}
-    out = {"speed": round(_num(raw.get("speed"), 0.5, 2.0, 1.0), 2),
+    out = {"style": str(raw.get("style") or "")[:20],
+           "speed": round(_num(raw.get("speed"), 0.5, 2.0, 1.0), 2),
+           "pause": round(_num(raw.get("pause"), 0.05, 1.0, DEFAULT["pause"]), 2),
            "canvas": raw.get("canvas") if raw.get("canvas") in CANVASES else "original"}
     c = raw.get("color") if isinstance(raw.get("color"), dict) else {}
     d = DEFAULT["color"]
@@ -50,15 +58,20 @@ def normalize(raw):
         "saturation": round(_num(c.get("saturation"), 0.0, 2.0, d["saturation"]), 3),
         "temp": int(_num(c.get("temp"), 3000, 10000, d["temp"])),
         "sharpen": round(_num(c.get("sharpen"), 0.0, 1.5, d["sharpen"]), 2),
+        "vignette": round(_num(c.get("vignette"), 0.0, 1.0, 0.0), 2),
     }
     s = raw.get("sub") if isinstance(raw.get("sub"), dict) else {}
     col = str(s.get("color") or "#FFFFFF")
     out["sub"] = {"size": round(_num(s.get("size"), 0.6, 1.8, 1.0), 2),
                   "pos": round(_num(s.get("pos"), 0, 45, 0), 1),
-                  "style": s.get("style") if s.get("style") in SUB_STYLES else "outline",
-                  "color": col.upper() if re.fullmatch(r"#[0-9a-fA-F]{6}", col) else "#FFFFFF"}
+                  "style": s.get("style") if s.get("style") in SUB_STYLES else DEFAULT["sub"]["style"],
+                  "color": col.upper() if re.fullmatch(r"#[0-9a-fA-F]{6}", col) else "#FFFFFF",
+                  "max_chars": int(_num(s.get("max_chars"), 6, 18, DEFAULT["sub"]["max_chars"]))}
     a = raw.get("audio") if isinstance(raw.get("audio"), dict) else {}
-    out["audio"] = {"denoise": bool(a.get("denoise", False)), "loudnorm": bool(a.get("loudnorm", True))}
+    out["audio"] = {"denoise": bool(a.get("denoise", False)), "loudnorm": bool(a.get("loudnorm", True)),
+                    "sfx": round(_num(a.get("sfx"), 0.0, 1.5, DEFAULT["audio"]["sfx"]), 2),
+                    "bgm": round(_num(a.get("bgm"), 0.0, 0.4, 0.0), 3),
+                    "duck": bool(a.get("duck", True))}
     f = raw.get("fade") if isinstance(raw.get("fade"), dict) else {}
     out["fade"] = {"in": bool(f.get("in", False)), "out": bool(f.get("out", True))}
     e = raw.get("export") if isinstance(raw.get("export"), dict) else {}
@@ -101,6 +114,8 @@ def video_filters(meta, st, W, H, label_in="[0:v]", label_out="[vb]"):
         base += f",colortemperature=temperature={c['temp']}"
     if c["sharpen"] > 0:
         base += f",unsharp=5:5:{c['sharpen']:.2f}:5:5:0"
+    if c.get("vignette", 0) > 0:      # 暗角：把视线引到人物脸上
+        base += f",vignette=angle={0.25 + 0.55 * c['vignette']:.3f}"
     return base + label_out
 
 

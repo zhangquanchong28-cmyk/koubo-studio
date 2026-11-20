@@ -23,7 +23,7 @@ from packer import (BGM_DIR, BGM_FILES, SFX_DIR, SFX_VOL, ZOOM_IN_SEC, ZOOM_TO,
                     _clean, broll_box, broll_events, build_events, build_timeline, probe)
 
 US = 1_000_000
-HEX = {"yellow": "#FFD400", "red": "#FF3B30", "blue": "#3EA6FF"}
+HEX = {"yellow": "#FFB800", "red": "#FF2B2B", "blue": "#2E7BFF", "orange": "#FF7A00", "green": "#00B4A0"}
 
 
 def _us(t):

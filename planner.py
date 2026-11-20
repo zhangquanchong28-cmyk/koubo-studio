@@ -8,47 +8,49 @@ from pathlib import Path
 import anthropic
 
 import settings as SET
+import styles
 
 SFX_KINDS = ["whoosh", "hit", "ding", "pop", "type", "page", "sparkle", "tick", "none"]
-COLORS = ["yellow", "red", "blue"]
+COLORS = ["yellow", "red", "blue", "orange", "green"]
 BGM_KINDS = ["upbeat", "chill", "hiphop", "none"]
 EFFECTS = ["pop", "count", "card"]
 LAYOUTS = ["pip", "full", "corner"]
 IMG_NAME = re.compile(r"^[\w\-]{1,60}\.(?:jpg|jpeg|png|webp)$")
 
-SYSTEM_PROMPT = """你是一名资深短视频口播剪辑师，报价 200～300 元/分钟。你只负责做"剪辑方案"，由程序执行。
+SYSTEM_PROMPT = """你是一名资深短视频口播剪辑师。你只负责做"剪辑方案"（JSON），由程序执行剪切和包装。
 
-## 剪辑原则（必须遵守）
-1. 删除：口误、说错后重说的前一遍（保留最后说对的那一遍）、重复啰嗦、无意义语气词、明显跑题、开拍前后的准备话。保留内容要连贯、意思完整，不改变顺序。
-2. 开头钩子：前 3 秒决定流量。如果全片中有比开头更抓人的一句（结论、冲突、反常识、数字），把它的编号填到 hook，程序会把这句复制一份放到最开头。开头已经足够抓人就填 null。
-3. 重点包装（emphasis）：
-   - 不要句句都做，大约每 2～3 句保留句做 1 句，开头前 2 句可以更密。
-   - keywords：该句里最该被记住的 1～2 个词（数字、结论、反转词、核心概念），必须是原句里一字不差的连续片段，2～8 个字。
-   - color：yellow=普通重点，red=警示/负面/风险，blue=科技/数据感。全片以 yellow 为主。
-   - big=true 表示把关键词放大到画面中上方单独弹出（视觉冲击最强），全片约每 4～6 句用一次，开头第一句一般用。
-   - effect（只在 big=true 时生效，决定大字怎么出现）：pop=放大弹出（默认）；count=数字滚动，从 0 滚到目标值，只用于关键词含阿拉伯数字的句子（如"3000元""95%"）；card=3D 翻转色卡，适合核心概念、结论、反转词。全片 count 和 card 各不超过 3～4 次，别连续两次用同一种。
-   - zoom=true 表示这一句镜头推近，约每 3～4 句一次，用在情绪/重点句，不要连续两句都推。
-   - sfx：配合画面的音效。whoosh=转场/切换，hit=重音强调/震撼，ding=提示/结论，pop=弹出/轻快，type=打字/列举，page=翻页/下一点，sparkle=惊喜/美好，tick=时间/数字计数，none=不加。同一种音效不要连用超过 3 次。
-4. title：全片顶部常驻标题，≤14 个字，概括视频核心卖点（像晨晨的"留学生进国央企"）；不适合就留空字符串。
-5. 配图（broll）：口播一直是人脸会单调，在适合的句子上配一张图，人声继续。
-   - 选句子：说到具体的东西/场景/人群（"打开手机""在写字楼加班""爸妈催婚"）、举例子、讲概念时最适合；纯观点、情绪句、开头第一句、钩子句不配。
-   - 数量：大约每 5～8 句配 1 张，3 分钟视频 5～8 张，不要连续两句都配；配图的句子不要再用 big 大字。
-   - desc：中文一句话说明画面（给用户看）。
-   - query：2～4 个英文单词，用来在免费图库搜实拍照片（如 "office night overtime"）。
-   - prompt：英文生图提示词，写实摄影风格，描述主体、场景、光线、构图，结尾加 "photorealistic, no text, no watermark"。不要出现真实名人、品牌 logo、文字。
-   - layout：pip=画中画（图片在画面上半部分，人物保留在下方，竖屏默认用这个）；full=全屏切到图片（重要场景，全片最多 2 次）；corner=右上角小窗（轻量补充）。
-6. 字幕纠错（text）：转写是机器识别的，常有同音错字（如"减触高级感"应为"剪出高级感"、"简映"应为"剪映"、"对其"应为"对齐"）。
-   只改明显的错别字和同音字，不改说法、不润色、不删字，改后字数尽量和原句一致；没有错就不要列出。格式：{"编号": "改正后的整句"}。
-   重点词要按改正后的句子来选。
-7. bgm：upbeat=轻快活泼，chill=舒缓治愈/情感，hiphop=有态度/节奏感，none=严肃话题不要音乐。
+## 总原则
+- 人声为根：口播的本质是听内容，所有包装为人声让路。可读性第一，网感第二。
+- 克制即专业：财经、民生、知识类，信任感比花哨重要；一屏一个重点，不要同时出现多个强视觉元素。
+- 节奏：前 3 秒抛钩子；之后每 10～15 秒给一个"注意力锚点"（重点词、大字、推近、配图之一）；全程"紧-松-紧"，不要匀速。
+
+## 方案怎么写
+1. 删除（delete）：只删口误、说错后重说的前一遍（保留最后说对的那一遍）、重复啰嗦、无意义语气词、明显跑题、开拍前后的准备话。
+   保留内容要连贯、意思完整、不改变顺序。句间停顿由程序按风格保留，你不用为了"节奏快"去删正常的句子。
+2. 开头钩子（hook）：如果全片有比开头更抓人的一句（结论、冲突、反常识、数字），填它的编号，程序会复制到最开头；开头已经够抓人就填 null。
+3. 重点包装（emphasis），密度按下面"风格"的规则：
+   - keywords：该句最该被记住的 1～2 个词（数字、结论、反转词、核心概念），必须是句子里一字不差的连续片段，2～8 个字。
+   - color：yellow=金色（普通重点）、red=正红（警示/风险/负面）、blue=深蓝（数据/政策/科技）、orange=橙（成长/干货重点）、green=青绿（正向/增长）。
+     全片高亮色不超过 2 种（按风格的配色要求）。
+   - big=true：关键词在画面中上方单独出现（最强视觉），配合 effect：pop=放大弹出；count=数字滚动（只用于含阿拉伯数字的词，如"3000元""95%"）；card=3D 色卡（核心概念/结论/反转）。别连续两次用同一种。
+   - zoom=true：这一句镜头缓慢推近，用在情绪/重点句，不要连续两句都推。
+   - sfx：音效只配关键词和大字，正文不加。ding=提示/结论，pop=轻快弹出，type=打字/列举，page=翻页/下一点，tick=数字/时间，sparkle=美好，hit=重音（只用于开头钩子或强反转），whoosh=转场，none=不加。同一种不连用超过 3 次。
+4. title：顶部常驻标题，≤14 个字，概括视频核心卖点；不适合就留空字符串。
+5. 配图（broll）：在适合的句子上叠一张图，人声继续，用来解释内容、给观众视觉休息。数量按风格。
+   - 选句子：说到具体的东西/场景/人群、举例子、讲数据来源时；纯观点句、开头第一句、钩子句不配；不要连续两句都配；配图的句子不再用 big。
+   - desc：中文一句话说明画面。query：2～4 个英文单词（免费图库搜索用）。
+   - prompt：英文生图提示词，写实摄影风格（主体、场景、光线、构图），结尾加 "photorealistic, no text, no watermark"；不要真实名人、品牌 logo、文字。
+   - layout：pip=画中画（竖屏放在人物胸前、字幕上方，不挡脸，默认）；full=全屏（全片最多 2 次）；corner=右上角小窗。
+6. 字幕纠错（text）：转写常有同音错字（如"减触高级感"→"剪出高级感"、"简映"→"剪映"、"对其"→"对齐"）。只改明显的错别字，不改说法、不润色，改后字数尽量一致；没错就不列。格式 {"编号": "改正后的整句"}。重点词按改正后的句子选。
+7. bgm：upbeat=轻快，chill=舒缓沉稳，hiphop=有态度，none=严肃话题不要音乐。只用纯音乐，程序会把音乐压在人声之下并在说话时自动避让。
 
 ## 输出
 只输出一个 JSON 对象，不要任何其他文字：
-{"title": "...", "hook": 编号或null, "delete": [编号...],
- "emphasis": [{"id": 编号, "keywords": ["..."], "color": "yellow", "big": false, "effect": "pop", "zoom": false, "sfx": "pop"}],
+{"style": "风格key", "title": "...", "hook": 编号或null, "delete": [编号...],
+ "emphasis": [{"id": 编号, "keywords": ["..."], "color": "yellow", "big": false, "effect": "pop", "zoom": false, "sfx": "none"}],
  "broll": [{"id": 编号, "desc": "...", "query": "...", "prompt": "...", "layout": "pip"}],
  "text": {"编号": "改正错别字后的整句"},
- "bgm": "upbeat", "notes": "一句话说明你的剪辑思路"}"""
+ "bgm": "chill", "notes": "一句话说明你的剪辑思路（含你判断的赛道）"}"""
 
 
 EXP_FILE = Path(__file__).resolve().parent / "经验" / "我的经验.md"
@@ -70,8 +72,9 @@ def user_rules():
     return ("\n\n## 用户自己的剪辑经验（优先级最高，和上面冲突时以这里为准）\n" + "\n".join(out[:200]))
 
 
-def system_prompt():
-    return SYSTEM_PROMPT + user_rules()
+def system_prompt(style=None):
+    """通用原则 + 风格规则（指定了就按它，没指定让 AI 自己判断赛道）+ 用户经验。"""
+    return SYSTEM_PROMPT + styles.guide(style) + user_rules()
 
 
 def make_client(cfg):
@@ -116,7 +119,7 @@ def _call(client, cfg, user_text, log, system=None):
         return client.messages.create(**kwargs)
 
 
-def ai_plan(cfg, data, notes="", log=print):
+def ai_plan(cfg, data, notes="", log=print, style=None):
     client = make_client(cfg)
     if client is None:
         log("没有填 API Key，使用本地规则方案。")
@@ -124,9 +127,13 @@ def ai_plan(cfg, data, notes="", log=print):
     user_text = (f"视频总时长 {data['duration']:.0f} 秒。\n"
                  f"用户要求：{notes or '无特别要求，按口播精品标准剪'}\n\n"
                  f"以下是转写短句（编号、开始时间、时长、文本）：\n{phrases_text(data['phrases'])}")
-    log(f"正在请 {model_id(cfg)} 生成剪辑方案…")
-    text, usage = _ask(client, cfg, user_text, log)
-    plan = parse_plan(text, data)
+    style = style if style in styles.STYLES else None
+    log(f"正在请 {model_id(cfg)} 生成剪辑方案（风格：{styles.STYLES[style]['name'] if style else 'AI 自动判断'}）…")
+    text, usage = _ask(client, cfg, user_text, log, system=system_prompt(style))
+    raw = _json_from(text)
+    if style:
+        raw["style"] = style
+    plan = sanitize(raw, data)
     plan["usage"] = usage
     return plan
 
@@ -182,10 +189,11 @@ def revise_plan(cfg, data, plan, instruction, log=print):
     user_text = (f"视频总时长 {data['duration']:.0f} 秒。\n转写短句：\n{phrases_text(data['phrases'])}\n\n"
                  f"当前方案：\n{json.dumps(cur, ensure_ascii=False)}\n\n用户的修改要求：{instruction}")
     log(f"AI 正在按「{instruction[:40]}」修改方案…")
-    text, usage = _ask(client, cfg, user_text, log, system=system_prompt() + REVISE_PROMPT)
+    text, usage = _ask(client, cfg, user_text, log, system=system_prompt(plan.get("style") or None) + REVISE_PROMPT)
     raw = _json_from(text)
     new = sanitize(raw.get("plan") or {}, data)
     new["notes"] = new.get("notes") or plan.get("notes", "")
+    new["style"] = new.get("style") or plan.get("style", "")
     old_usd = (plan.get("usage") or {}).get("usd", 0)
     new["usage"] = dict(usage, usd=round(old_usd + usage["usd"], 4))
     return new, str(raw.get("reply") or "已修改。"), str(raw.get("remember") or "").strip(), usage["usd"]
@@ -307,6 +315,7 @@ def sanitize(raw, data):
         if e["id"] in bseen:
             e["big"] = False
     return {
+        "style": raw.get("style") if raw.get("style") in styles.STYLES else "",
         "title": str(raw.get("title") or "")[:20],
         "hook": hook, "delete": delete,
         "emphasis": sorted(emph, key=lambda x: x["id"]),

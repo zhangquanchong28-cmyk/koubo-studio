@@ -4,7 +4,7 @@
 (function () {
   "use strict";
   const PAD_IN = 0.08, PAD_OUT = 0.12, MERGE = 0.15, ZOOM_TO = 1.10, ZOOM_SEC = 0.45, BROLL_MIN = 2.2;
-  const HEX = {yellow: "#FFD400", red: "#FF3B30", blue: "#3EA6FF"};
+  const HEX = {yellow: "#FFB800", red: "#FF2B2B", blue: "#2E7BFF", orange: "#FF7A00", green: "#00B4A0"};
   const SFX_LEAD = {whoosh: 0.12};
   const keep = {sel: null, pxps: null, time: 0, pid: null, scroll: 0};   // 重新渲染之间保留的视图状态
   let S = null;
@@ -26,12 +26,19 @@
   const shown = ph => (S.wp.text || {})[String(ph.id)] || ph.text;
   const trimOf = id => S.wp.trim[String(id)] || [0, 0];
 
+  function gapKeep(i) {   // 与 packer 相同：两句都保留时，句间保留的停顿
+    const a = S.phrases[i], b = S.phrases[i + 1], g = Math.max(0, b.start - a.end);
+    const pause = (S.st && S.st.pause) ?? 0.25;
+    return Math.min(g, pause + (/[。？！?!]$/.test(a.text.trim()) ? 0.15 : 0));
+  }
   function spanOf(i) {   // 与 packer.build_timeline.span 相同的规则
     const P = S.phrases, p = P[i], [ds, de] = trimOf(p.id), moved = ds || de;
     let lo = 0, hi = S.dur;
     if (i > 0) { const q = P[i - 1]; lo = moved && gone(q) ? q.start : q.end; }
     if (i + 1 < P.length) { const q = P[i + 1]; hi = moved && gone(q) ? q.end : q.start; }
-    return [Math.max(lo, p.start - PAD_IN + ds, 0), Math.min(hi, p.end + PAD_OUT + de, S.dur)];
+    const padIn = i > 0 && !gone(P[i - 1]) ? gapKeep(i - 1) * 0.4 : PAD_IN;
+    const padOut = i + 1 < P.length && !gone(P[i + 1]) ? gapKeep(i) * 0.6 : PAD_OUT;
+    return [Math.max(lo, p.start - padIn + ds, 0), Math.min(hi, p.end + padOut + de, S.dur)];
   }
 
   function buildRanges() {
@@ -290,12 +297,29 @@
     if (ti.dataset.t !== tt) { ti.dataset.t = tt; ti.innerHTML = tt ? `<span>${esc(tt)}</span>` : ""; }
     // 字幕
     const sub = S.el.querySelector(".ov-sub");
-    const key = ph ? ph.id + "|" + shown(ph) + JSON.stringify(S.emph[ph.id] || {}) : "";
+    let piece = ph ? shown(ph) : "";
+    if (ph) {
+      const max = (S.st && S.st.sub && S.st.sub.max_chars) || 10, txt = shown(ph), parts = [];
+      let cur = "";
+      for (const ch of txt) {
+        cur += ch;
+        const w = clean(cur).length;
+        if (w >= max || (w >= max * 0.45 && /[，。！？；、,.!?;]/.test(ch))) { parts.push(cur); cur = ""; }
+      }
+      if (cur) { if (parts.length && clean(cur).length < 3) parts[parts.length - 1] += cur; else parts.push(cur); }
+      let acc = 0, total = txt.length || 1;
+      for (const x of parts) {
+        const t0 = ph.start + (ph.end - ph.start) * acc / total;
+        acc += x.length;
+        if (t >= t0 - 0.05) piece = x;
+      }
+    }
+    const key = ph ? ph.id + "|" + piece + JSON.stringify(S.emph[ph.id] || {}) : "";
     if (sub.dataset.k !== key) {
       sub.dataset.k = key;
       if (!ph) sub.innerHTML = "";
       else {
-        let h = esc(clean(shown(ph)));
+        let h = esc(clean(piece));
         const e = S.emph[ph.id];
         if (e) for (const kw of e.keywords || []) { const c = esc(clean(kw)); if (c) h = h.replace(c, `<b style="color:${HEX[e.color] || HEX.yellow}">${c}</b>`); }
         sub.innerHTML = `<span>${h}</span>`;

@@ -30,11 +30,41 @@ SFX_FILES = {
     "tick": ["clock-tick-single.mp3", "clock-knob-spin.mp3"],
     "hook": ["impact-movie-epic.mp3"],
 }
-SFX_VOL = {"whoosh": 0.45, "hit": 0.55, "ding": 0.45, "pop": 0.5, "type": 0.5,
-           "page": 0.6, "sparkle": 0.45, "tick": 0.5, "hook": 0.45}
+# 音效基准音量（再乘全片设置里的音效倍数）。规范要求音效约为人声 10%～15%，比早期版本整体调轻
+SFX_VOL = {"whoosh": 0.27, "hit": 0.33, "ding": 0.27, "pop": 0.3, "type": 0.3,
+           "page": 0.36, "sparkle": 0.27, "tick": 0.3, "hook": 0.3}
 SFX_LEAD = {"whoosh": 0.12, "hook": 0.0}
 BGM_FILES = {"upbeat": "house-vibez.mp3", "chill": "cat-walk.mp3", "hiphop": "g-eazy-nba-type.mp3"}
-ASS_COLOR = {"yellow": "&H0000D4FF&", "red": "&H00303BFF&", "blue": "&H00FFA63E&"}
+# 高亮色（规范色值）：金 #FFB800、正红 #FF2B2B、深蓝 #2E7BFF、橙 #FF7A00、青绿 #00B4A0（ASS 为 BGR）
+ASS_COLOR = {"yellow": "&H0000B8FF&", "red": "&H002B2BFF&", "blue": "&H00FF7B2E&",
+             "orange": "&H00007AFF&", "green": "&H00A0B400&"}
+
+FONTS_DIR = APP / "fonts"          # 内置思源黑体（SIL OFL，可商用）
+BUILTIN_FONT = "Source Han Sans CN"
+
+
+def font_roles(font):
+    """正文 / 重点词 / 大字标题 三级字体。用内置思源黑体时分别用 中黑 / 粗 / 特粗。"""
+    f = (font or "").strip()
+    if not f or f.startswith(BUILTIN_FONT) or f.startswith("思源黑体"):
+        return {"body": f"{BUILTIN_FONT} Medium", "bold": f"{BUILTIN_FONT} Bold", "heavy": f"{BUILTIN_FONT} Heavy"}
+    return {"body": f, "bold": f, "heavy": f}
+
+
+def ass_filter(workdir, name):
+    """ass 滤镜，带上内置字体目录（用相对路径，避开 Windows 盘符冒号的转义问题）。"""
+    if FONTS_DIR.is_dir():
+        try:
+            rel = os.path.relpath(FONTS_DIR, workdir).replace("\\", "/")
+            if ":" not in rel and "'" not in rel:
+                return f"ass={name}:fontsdir={rel}"
+        except ValueError:      # 不在同一个盘：把字体拷进工作目录
+            pass
+        local = Path(workdir) / "fonts"
+        if not local.exists():
+            shutil.copytree(FONTS_DIR, local)
+        return f"ass={name}:fontsdir=fonts"
+    return f"ass={name}"
 
 
 def _ffmpeg():
@@ -87,10 +117,22 @@ def build_timeline(data, plan):
 
     trims = plan.get("trim") or {}
     gone = {p["id"] for p in phrases if p["id"] in delete or p.get("filler")}
+    pause = SET.of(plan)["pause"]
+
+    def gap_keep(i):
+        """第 i 句和第 i+1 句都保留时，两句之间保留多少停顿（句末多留一点，像换段落）。"""
+        a, b = phrases[i], phrases[i + 1]
+        g = max(0.0, b["start"] - a["end"])
+        want = pause + (0.15 if a["text"].strip()[-1:] in "。？！?!" else 0.0)
+        return min(g, want)
 
     def span(i):
         p = phrases[i]
         ds, de = trims.get(str(p["id"]), (0.0, 0.0))
+        prev_kept = i > 0 and phrases[i - 1]["id"] not in gone
+        next_kept = i + 1 < len(phrases) and phrases[i + 1]["id"] not in gone
+        pad_in = gap_keep(i - 1) * 0.4 if prev_kept else PAD_IN
+        pad_out = gap_keep(i) * 0.6 if next_kept else PAD_OUT
         # 相邻句被删掉时，允许把入出点拖进它的范围（用户在时间线上手动微调）
         if i == 0:
             lo = 0.0
@@ -102,8 +144,8 @@ def build_timeline(data, plan):
         else:
             q = phrases[i + 1]
             hi = (q["end"] if q["id"] in gone else q["start"]) if (ds or de) else q["start"]
-        s = max(lo, p["start"] - PAD_IN + ds, 0.0)
-        e = min(hi, p["end"] + PAD_OUT + de, duration)
+        s = max(lo, p["start"] - pad_in + ds, 0.0)
+        e = min(hi, p["end"] + pad_out + de, duration)
         return s, e
 
     ranges = []
@@ -215,10 +257,54 @@ def kw_time(p, kw, plan):
     return p["start"] + (p["end"] - p["start"]) * (max(0, i) / max(1, len(t)))
 
 
+SUB_LEAD = 0.05     # 字幕比人声早一点出现，观感上更同步
+_BREAK_AFTER = "，。！？；、,.!?;：:"
+
+
+def split_phrase(p, plan, max_chars, keep=()):
+    """把一句拆成每条不超过 max_chars 个字的字幕（用逐字时间），优先在标点处断，不拆开重点词。
+    返回 [(开始, 结束, 文字)]（原片时间）。改过字或没有逐字时间时不拆（交给折行）。"""
+    text = display_text(p, plan)
+    words = p.get("words") or []
+    if _text_width(_clean(text)) <= max_chars:
+        return [(p["start"], p["end"], text)]
+    full, bounds = "", []            # bounds: (字符位置, 该位置开始的时间)
+    if text == p["text"] and words:  # 原文：用逐字时间
+        for ws, _we, wt in words:
+            bounds.append((len(full), ws))
+            full += wt
+    else:                            # 改过字 / 没有逐字时间：按字数比例估时间
+        full = text
+        n = max(1, len(full))
+        bounds = [(i, p["start"] + (p["end"] - p["start"]) * i / n) for i in range(n)]
+    bad = set()
+    for kw in keep:
+        i = full.find(kw)
+        if i >= 0:
+            bad.update(range(i + 1, i + len(kw)))
+    cand = [(b, t) for b, t in bounds[1:] if b not in bad]
+    out, start, t0 = [], 0, p["start"]
+    while _text_width(_clean(full[start:])) > max_chars:
+        fits = [(b, t) for b, t in cand if b > start and _text_width(_clean(full[start:b])) <= max_chars]
+        punct = [(b, t) for b, t in fits if full[b - 1] in _BREAK_AFTER and _text_width(full[start:b]) >= max_chars * 0.45]
+        pick = (punct or fits or [(b, t) for b, t in cand if b > start][:1])
+        if not pick:
+            break
+        b, t = pick[-1] if (punct or fits) else pick[0]
+        if _text_width(_clean(full[b:])) < 2.5:       # 剩一两个字就不单独成条
+            break
+        out.append((t0, t, full[start:b]))
+        start, t0 = b, t
+    out.append((t0, p["end"], full[start:]))
+    return [(a, b, x) for a, b, x in out if _clean(x)]
+
+
 def build_events(ranges, durs, plan):
     """把方案换算到成片时间：字幕行、大字弹出、音效点（已考虑整体变速）。"""
     emph = {e["id"]: e for e in plan.get("emphasis", [])}
-    sp = SET.of(plan)["speed"]
+    st = SET.of(plan)
+    sp = st["speed"]
+    max_chars = st["sub"]["max_chars"]
     subs, pops, sfx = [], [], []
     off = 0.0
     used = {}
@@ -234,8 +320,16 @@ def build_events(ranges, durs, plan):
                 for kw in e["keywords"]:
                     kt = off + max(0.0, kw_time(p, kw, plan) - r["start"]) / sp
                     kws.append((kw, min(max(kt, a), b)))
-            subs.append({"a": a, "b": b, "text": display_text(p, plan), "kws": kws,
-                         "color": (e or {}).get("color", "yellow")})
+            color = (e or {}).get("color", "yellow")
+            pieces = split_phrase(p, plan, max_chars, [k for k, _ in kws])
+            for k, (ca, cb, ctext) in enumerate(pieces):
+                sa = off + max(0.0, ca - r["start"]) / sp
+                sb = b if k == len(pieces) - 1 else off + max(0.0, cb - r["start"]) / sp
+                sa = max(0.0, max(a, sa) - SUB_LEAD)
+                if sb <= sa:
+                    continue
+                subs.append({"a": sa, "b": sb, "text": ctext, "color": color,
+                             "kws": [(kw, kt) for kw, kt in kws if kw in ctext]})
             if e and e["big"] and kws:
                 kw, kt = kws[0]
                 pops.append({"a": kt, "b": max(b + 0.25, kt + 1.0), "text": kw, "color": e["color"],
@@ -293,6 +387,8 @@ def wrap_cn(text, max_w, keep=()):
 
 
 def write_ass(path, subs, pops, title, total, meta, font, sub=None):
+    fr = font_roles(font)
+    font = fr["body"]
     W, H = meta["w"], meta["h"]
     portrait = H >= W
     S = round(min(W, H) * 0.058)
@@ -301,7 +397,10 @@ def write_ass(path, subs, pops, title, total, meta, font, sub=None):
     SS = round(S * sub["size"])
     mv_sub = round(H * (sub["pos"] / 100 if sub["pos"] else (0.17 if portrait else 0.07)))
     prim = SET.ass_color(sub["color"])
-    if sub["style"] == "box":        # 半透明黑底框
+    if sub["style"] == "soft":       # 柔和阴影 + 极细半透明描边（默认）：不显粗糙，复杂背景也看得清
+        sub_style = (f"{prim},&H00FFFFFF,&H90000000,&H80000000,1,0,0,0,100,100,1,0,1,"
+                     f"{max(1, round(SS / 32))},{max(2, round(SS / 14))}")
+    elif sub["style"] == "box":      # 半透明黑底框
         sub_style = f"{prim},&H00FFFFFF,&H60000000,&H60000000,1,0,0,0,100,100,1,0,3,{round(SS * 0.22)},0"
     elif sub["style"] == "shadow":   # 无描边，柔和投影
         sub_style = f"{prim},&H00FFFFFF,&H00000000,&H50000000,1,0,0,0,100,100,1,0,1,0,{max(2, round(SS / 10))}"
@@ -319,8 +418,8 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Sub,{font},{SS},{sub_style},2,{round(W * 0.06)},{round(W * 0.06)},{mv_sub},1
-Style: Pop,{font},{round(S * 2.1)},&H0000D4FF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,2,0,1,{ol * 2},{ol},8,{round(W * 0.05)},{round(W * 0.05)},{mv_pop},1
-Style: Title,{font},{round(S * 1.1)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,1,0,0,0,100,100,2,0,3,{round(S * 0.35)},0,8,{round(W * 0.08)},{round(W * 0.08)},{mv_title},1
+Style: Pop,{fr["heavy"]},{round(S * 2.1)},&H0000D4FF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,2,0,1,{ol * 2},{ol},8,{round(W * 0.05)},{round(W * 0.05)},{mv_pop},1
+Style: Title,{fr["bold"]},{round(S * 1.1)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,1,0,0,0,100,100,2,0,3,{round(S * 0.35)},0,8,{round(W * 0.08)},{round(W * 0.08)},{mv_title},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -328,7 +427,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     lines = []
     if title:
         lines.append(f"Dialogue: 2,{_ass_time(0)},{_ass_time(total)},Title,,0,0,0,,{{\\fad(300,300)}}{_esc(title)}")
-    max_w = W * 0.88 / max(1, SS)          # 一行最多放多少个汉字宽
+    max_w = min(W * 0.88 / max(1, SS), sub.get("max_chars", 10))   # 一行最多放多少个汉字宽
     for s in subs:
         text = _esc(wrap_cn(_clean(s["text"]), max_w, [_clean(k) for k, _ in s["kws"]]))
         for kw, kt in s["kws"]:
@@ -337,11 +436,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             dt = int(max(0.0, kt - s["a"]) * 1000)
             col = ASS_COLOR.get(s["color"], ASS_COLOR["yellow"])
-            tag = (f"{{\\c{col}\\fscx100\\fscy100\\t({dt},{dt + 110},\\fscx128\\fscy128)"
-                   f"\\t({dt + 110},{dt + 240},\\fscx112\\fscy112)}}")
+            bold = f"\\fn{fr['bold']}" if fr["bold"] != fr["body"] else "\\b1"
+            tag = (f"{{{bold}\\c{col}\\fscx100\\fscy100\\t({dt},{dt + 150},\\fscx116\\fscy116)"
+                   f"\\t({dt + 150},{dt + 300},\\fscx110\\fscy110)}}")
             text = text.replace(ckw, tag + ckw + "{\\r}", 1)
         text = text.replace("\n", "\\N")
-        lines.append(f"Dialogue: 1,{_ass_time(s['a'])},{_ass_time(s['b'])},Sub,,0,0,0,,{{\\fad(60,60)}}{text}")
+        lines.append(f"Dialogue: 1,{_ass_time(s['a'])},{_ass_time(s['b'])},Sub,,0,0,0,,{{\\fad(150,100)}}{text}")
     for p in pops:
         fx = p.get("effect", "pop")
         if fx == "count" and _NUM_RE.search(p["text"]):
@@ -359,7 +459,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # ---------------------------------------------------------------- 高级包装：数字滚动 / 3D 卡片
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 COUNT_SEC, COUNT_STEPS = 0.7, 16
-CARD_BG = {"yellow": "&H0000C8FF&", "red": "&H002A2AE8&", "blue": "&H00E8902E&"}
+CARD_BG = {"yellow": "&H0000B0F5&", "red": "&H002A2AE8&", "blue": "&H00E8701E&",
+           "orange": "&H000072F0&", "green": "&H0096A800&"}
 
 
 def _count_lines(p, W, H, mv, S):
@@ -430,8 +531,12 @@ def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, 
     cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(body)]
     parts, labels = [], []
     if meta["has_audio"]:
-        parts.append("[0:a]aformat=sample_rates=48000:channel_layouts=stereo[a0]")
+        bgm_on = bool(BGM_FILES.get(bgm_kind)) and (BGM_DIR / BGM_FILES.get(bgm_kind, "x")).is_file()
+        duck = st["audio"]["duck"] and bgm_on
+        parts.append("[0:a]aformat=sample_rates=48000:channel_layouts=stereo" + (",asplit=2[a0][vk]" if duck else "[a0]"))
         labels.append("[a0]")
+    else:
+        duck = False
     idx = 1
     for k, s in enumerate(sfx):
         f = SFX_DIR / s["file"]
@@ -440,15 +545,18 @@ def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, 
         cmd += ["-i", str(f)]
         ms = int(s["t"] * 1000)
         parts.append(f"[{idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-                     f"volume={SFX_VOL[s['kind']]},adelay={ms}|{ms}[s{k}]")
+                     f"volume={SFX_VOL[s['kind']] * st['audio']['sfx']:.3f},adelay={ms}|{ms}[s{k}]")
         labels.append(f"[s{k}]")
         idx += 1
     bgm = BGM_FILES.get(bgm_kind)
     if bgm and (BGM_DIR / bgm).is_file():
         cmd += ["-stream_loop", "-1", "-i", str(BGM_DIR / bgm)]
         fo = max(0.0, total - 2.0)
-        parts.append(f"[{idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={bgm_vol},"
-                     f"atrim=0:{total:.3f},afade=t=in:d=1,afade=t=out:st={fo:.3f}:d=2[bg]")
+        vol = st["audio"]["bgm"] or bgm_vol
+        parts.append(f"[{idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={vol:.3f},"
+                     f"atrim=0:{total:.3f},afade=t=in:d=1,afade=t=out:st={fo:.3f}:d=2" + ("[bgr]" if duck else "[bg]"))
+        if duck:   # 音频闪避：人声一出来，音乐自动压低
+            parts.append("[bgr][vk]sidechaincompress=threshold=0.035:ratio=5:attack=15:release=350[bg]")
         labels.append("[bg]")
         idx += 1
     vin = "[0:v]"
@@ -460,7 +568,7 @@ def final_mix(body, workdir, out_mp4, sfx, bgm_kind, total, meta, bgm_vol=0.10, 
         parts.append(f"{vin}[b{k}]overlay={o['x']}:{o['y']}:eof_action=pass[v{k}]")
         vin = f"[v{k}]"
         idx += 1
-    vf = f"{vin}ass=subs.ass"
+    vf = f"{vin}{ass_filter(workdir, 'subs.ass')}"
     if st["fade"]["in"]:
         vf += ",fade=t=in:st=0:d=0.6"
     if st["fade"]["out"]:
@@ -628,7 +736,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: C,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,2,0,1,{max(4, fs // 11)},{max(3, fs // 16)},8,{round(W * 0.05)},{round(W * 0.05)},{round(H * (0.16 if portrait else 0.1))},1
+Style: C,{font_roles(font)["heavy"]},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,2,0,1,{max(4, fs // 11)},{max(3, fs // 16)},8,{round(W * 0.05)},{round(W * 0.05)},{round(H * (0.16 if portrait else 0.1))},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -642,7 +750,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     tmp = Path(tempfile.mkdtemp(prefix="koubo_cover_", dir=str(Path(out_jpg).parent)))
     try:
         (tmp / "cover.ass").write_text(head + ev, encoding="utf-8-sig")
-        vf = SET.video_filters(src_meta, st, W, H, "[0:v]", "") + ",ass=cover.ass[v]"
+        vf = SET.video_filters(src_meta, st, W, H, "[0:v]", "") + "," + ass_filter(tmp, "cover.ass") + "[v]"
         subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{max(0.0, t):.3f}",
                         "-i", str(Path(src).resolve()), "-frames:v", "1", "-filter_complex", vf, "-map", "[v]",
                         "-q:v", "2", str(Path(out_jpg).resolve())], check=True, cwd=str(tmp))

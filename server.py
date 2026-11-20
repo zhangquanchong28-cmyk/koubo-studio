@@ -21,16 +21,17 @@ import asr  # noqa: E402
 import broll  # noqa: E402
 import packer  # noqa: E402
 import planner  # noqa: E402
+import styles  # noqa: E402
 
 # Windows 注册表里的类型映射经常不对（.js 变成 text/plain），这里固定
 for _t, _e in (("text/javascript", ".js"), ("text/html", ".html"), ("video/mp4", ".mp4"),
-               ("video/quicktime", ".mov"), ("image/webp", ".webp"), ("text/plain", ".srt")):
+               ("video/quicktime", ".mov"), ("image/webp", ".webp"), ("text/plain", ".srt"), ("font/otf", ".otf")):
     mimetypes.add_type(_t, _e)
 
 PROJECTS = APP / "projects"
 CONFIG = APP / "config.json"
 DEFAULT_CFG = {"provider": "openrouter", "api_key": "", "model": "", "effort": "medium",
-               "font": "Microsoft YaHei" if os.name == "nt" else "WenQuanYi Zen Hei",
+               "font": "Source Han Sans CN",     # 内置思源黑体（可商用）；也可填系统里装好的字体名
                "whisper_model": "medium", "device": "cpu", "bgm_vol": 0.10, "jianying_root": "", "concat_path": "",
                "broll_source": "auto", "image_model": "", "pexels_key": "", "pixabay_key": "", "max_ai_images": 10}
 SECRET_KEYS = ("api_key", "pexels_key", "pixabay_key")
@@ -42,6 +43,8 @@ def load_cfg():
     if CONFIG.is_file():
         try:
             cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+            if cfg.get("font") in ("Microsoft YaHei", "WenQuanYi Zen Hei"):   # 旧默认字体（微软雅黑商用需授权）→ 内置思源黑体
+                cfg["font"] = DEFAULT_CFG["font"]
         except (ValueError, OSError):
             pass
     if os.environ.get("KOUBO_FOLLOW") == "1" and not (cfg.get("api_key") or "").strip():
@@ -131,12 +134,19 @@ def load_transcript(pid):
     return json.loads(f.read_text(encoding="utf-8"))
 
 
-def job_plan(pid, notes):
+def job_plan(pid, notes, style=None):
     cfg = load_cfg()
 
     def fn():
         data = load_transcript(pid)
-        plan = planner.ai_plan(cfg, data, notes, log=lambda m: log(pid, m))
+        old = json.loads(_plan_path(pid).read_text(encoding="utf-8")) if _plan_path(pid).is_file() else {}
+        plan = planner.ai_plan(cfg, data, notes, log=lambda m: log(pid, m), style=style)
+        keep_settings = old.get("settings") and old["settings"].get("style") == plan.get("style")
+        if keep_settings:      # 同一风格重新出方案：保留你调过的全片设置
+            plan["settings"] = old["settings"]
+        else:                  # 新风格：套用这个风格的全片设置（变速、停顿、调色、字幕、音量）
+            plan["settings"] = styles.preset_settings(plan.get("style") or styles.DEFAULT_STYLE)
+            log(pid, f"已套用「{styles.STYLES[plan['settings']['style']]['name']}」的全片设置，可在「全片设置」里改。")
         (pdir(pid) / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
         log(pid, "方案已生成：" + (plan.get("notes") or ""))
         update(pid, stage="planned")
@@ -368,6 +378,8 @@ class H(BaseHTTPRequestHandler):
                 return self._file(APP / "ui.html")
             if parts == ["timeline.js"]:
                 return self._file(APP / "timeline.js")
+            if len(parts) == 2 and parts[0] == "fonts" and re.fullmatch(r"SourceHanSansCN-(Medium|Bold|Heavy)\.otf", parts[1]):
+                return self._file(APP / "fonts" / parts[1])
             if parts == ["api", "config"]:
                 cfg = load_cfg()
                 cfg["has_key"] = bool(cfg.get("api_key"))
@@ -376,6 +388,9 @@ class H(BaseHTTPRequestHandler):
                     k = cfg.get(sk, "")
                     cfg[sk] = (k[:6] + "…" + k[-4:]) if len(k) > 12 else ("已填写" if k else "")
                 return self._json(cfg)
+            if parts == ["api", "styles"]:
+                return self._json({k: {"name": v["name"], "settings": styles.preset_settings(k)}
+                                   for k, v in styles.STYLES.items()})
             if parts == ["api", "projects"]:
                 out = []
                 if PROJECTS.is_dir():
@@ -518,7 +533,7 @@ class H(BaseHTTPRequestHandler):
                 if act == "transcribe":
                     job_transcribe(pid)
                 elif act == "plan":
-                    job_plan(pid, body.get("notes", ""))
+                    job_plan(pid, body.get("notes", ""), body.get("style") or None)
                 elif act == "save":
                     data = load_transcript(pid)
                     plan = planner.sanitize(body.get("plan", {}), data)

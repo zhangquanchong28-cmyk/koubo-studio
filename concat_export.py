@@ -21,7 +21,7 @@ from pathlib import Path
 from packer import (BGM_DIR, BGM_FILES, SFX_DIR, SFX_VOL, ZOOM_IN_SEC, ZOOM_TO,
                     _clean, build_events, build_timeline, probe)
 
-HEX = {"yellow": "#ffd400", "red": "#ff3b30", "blue": "#3ea6ff"}
+HEX = {"yellow": "#ffb800", "red": "#ff2b2b", "blue": "#2e7bff", "orange": "#ff7a00", "green": "#00b4a0"}
 
 
 def find_concat(cfg_path=""):

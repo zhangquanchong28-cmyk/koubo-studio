@@ -4,7 +4,7 @@
 项目目录格式和网页工作台完全一样（projects/<编号>/），所以云端做好的方案能打包带回本地，在原片上出高清。
 
   python koubo.py new 视频.mp4 [第2段.mp4 ...] [--name 名字]   导入（多段按顺序拼起来）并转写
-  python koubo.py plan  <编号> [--notes "要求"]                  AI 出剪辑方案（会带上 经验/我的经验.md）
+  python koubo.py plan  <编号> [--notes "要求"] [--style 风格]    AI 出剪辑方案（带上风格规则和 经验/我的经验.md）
   python koubo.py show  <编号>                                    逐句列出方案（删/重点词/大字/配图…）
   python koubo.py broll <编号> [--ids 3,8] [--force] [--source ai|stock|auto]   找配图
   python koubo.py render <编号>                                   出片 → projects/<编号>/out/成片.mp4
@@ -82,7 +82,9 @@ def _load(pid):
 
 def cmd_plan(a):
     data = _load(a.pid)
-    plan = planner.ai_plan(cfg(), data, a.notes or "", log=say(a.pid))
+    plan = planner.ai_plan(cfg(), data, a.notes or "", log=say(a.pid), style=a.style)
+    import styles
+    plan["settings"] = styles.preset_settings(plan.get("style") or styles.DEFAULT_STYLE)
     server._write_plan(a.pid, plan)
     server.update(a.pid, stage="planned")
     print("思路：" + plan.get("notes", ""))
@@ -226,6 +228,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("new"); p.add_argument("files", nargs="+"); p.add_argument("--name")
     p = sub.add_parser("plan"); p.add_argument("pid"); p.add_argument("--notes")
+    p.add_argument("--style", help="finance/news/knowledge/story/hook/chenchen；不填 AI 自己判断")
     for n in ("show", "check", "render", "jianying", "pack"):
         sub.add_parser(n).add_argument("pid")
     p = sub.add_parser("broll"); p.add_argument("pid"); p.add_argument("--ids"); p.add_argument("--force", action="store_true")
