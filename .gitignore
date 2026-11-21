@@ -3,3 +3,4 @@ config.json
 __pycache__/
 .venv/
 *.pyc
+inbox/

@@ -39,7 +39,32 @@ def encode(src, dst, start, length, vkbps):
     subprocess.run(cmd, check=True)
 
 
+HD_LIMIT_GB = 1.9      # GitHub Release 单个附件上限 2GB，留点余量
+
+
+def hd(src):
+    """高清上传版：短边 1080、画质接近原片，用来上传到 GitHub / 云存储，云端可以直接出最终成片。"""
+    dst = src.with_name(src.stem + "_高清上传版.mp4")
+    for crf in (21, 24, 27):
+        print(f"正在压缩高清上传版（画质 {crf}，数字越小越清晰）…")
+        subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-stats", "-y", "-i", str(src),
+                        "-vf", "scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)'",
+                        "-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(dst)], check=True)
+        gb = dst.stat().st_size / 1024 ** 3
+        if gb <= HD_LIMIT_GB:
+            break
+        print(f"  {gb:.2f}GB 还是太大，再压一档…")
+    mb = dst.stat().st_size / 1024 ** 2
+    print(f"完成：{dst.name}  {mb:.0f}MB（原片 {src.stat().st_size / 1024 ** 2:.0f}MB）")
+    print("上传方法：GitHub 打开 koubo-studio 仓库 → Releases → Draft a new release → 把这个文件拖进去 → Save draft，")
+    print("然后在 Claude 里说「视频传好了」。")
+
+
 def main():
+    if "--hd" in sys.argv:
+        sys.argv.remove("--hd")
+        return hd(video_arg())
     src = video_arg()
     total = duration(src)
     budget_kbps = LIMIT_MB * 8 * 1024 / total - AUDIO_KBPS

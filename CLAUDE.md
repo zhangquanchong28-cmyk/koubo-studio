@@ -26,7 +26,7 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 ## 代码地图
 | 文件 | 作用 |
 |---|---|
-| `koubo.py` | 云端命令行：new / plan / show / check / broll / render / frames / jianying / pack / list |
+| `koubo.py` | 云端命令行：fetch / new / plan / show / check / broll / render / frames / cover / jianying / pack / list |
 | `asr.py` | faster-whisper 逐字时间戳 → 短句；繁体自动转简体、怪标点规范化 |
 | `planner.py` | Claude 出剪辑方案（JSON）；通用原则 + 风格规则 + 自动拼入 `经验/我的经验.md` |
 | `styles.py` | 风格模板（财经/民生/知识/故事/大字报/晨晨精剪）：AI 剪辑规则 + 全片设置预设 |
@@ -39,7 +39,7 @@ fc-list | grep -qi "wqy" || apt-get install -y fonts-wqy-zenhei
 | `jianying.py` + `windows_draft.py` | 剪映草稿导出（windows_draft 来自 video-shotcraft，Apache-2.0） |
 | `concat_export.py` | 【实验，未实测】导出到开源剪辑器 Concat |
 | `server.py` + `ui.html` | 本地网页工作台（127.0.0.1），项目目录格式与 koubo.py 相同 |
-| `shrink.py` + `压缩代理.bat` | 本地把大原片压到 30MB 以内供上传 |
+| `shrink.py` + `压缩代理.bat` / `高清上传版.bat` | 本地压缩：30MB 以内代理 / 1080p 高清上传版（≤1.9GB，传 GitHub Release） |
 | `经验/` | 方法论与用户经验库（技能会往 `我的经验.md` 里追加） |
 
 项目数据都在 `projects/<编号>/`（已 gitignore）：`state.json`、`transcript.json`、`plan.json`、`broll/`、`out/`。

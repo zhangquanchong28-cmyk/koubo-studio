@@ -3,6 +3,7 @@
 
 项目目录格式和网页工作台完全一样（projects/<编号>/），所以云端做好的方案能打包带回本地，在原片上出高清。
 
+  python koubo.py fetch [latest|Release名|下载直链]              把大视频拉到 inbox/（GitHub Release 附件 / 云存储链接）
   python koubo.py new 视频.mp4 [第2段.mp4 ...] [--name 名字]   导入（多段按顺序拼起来）并转写
   python koubo.py plan  <编号> [--notes "要求"] [--style 风格]    AI 出剪辑方案（带上风格规则和 经验/我的经验.md）
   python koubo.py show  <编号>                                    逐句列出方案（删/重点词/大字/配图…）
@@ -25,6 +26,10 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP))
+_CA = Path("/root/.ccr/ca-bundle.crt")          # 云端容器走代理时用的证书（本地电脑上没有这个文件，不影响）
+if _CA.is_file():
+    import os
+    os.environ.setdefault("SSL_CERT_FILE", str(_CA))
 
 import server  # noqa: E402  复用工作台的项目存取与任务函数
 import planner  # noqa: E402
@@ -43,6 +48,67 @@ def cfg():
 
 def say(pid):
     return lambda m: (print(m, flush=True), server.log(pid, m))
+
+
+MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mp3", ".m4a", ".wav", ".aac", ".flac"}
+
+
+def _repo():
+    url = subprocess.run(["git", "-C", str(APP), "remote", "get-url", "origin"], capture_output=True, text=True).stdout
+    m = __import__("re").search(r"github\.com[/:]([^/]+/[^/.\s]+)", url)
+    if not m:
+        sys.exit("找不到 GitHub 仓库地址（git remote origin）。")
+    return m.group(1)
+
+
+def cmd_fetch(a):
+    """把大视频拉到云端 inbox/：GitHub Release 附件（用户在网页上传，≤2GB/个）或直链（云存储分享链接）。"""
+    inbox = APP / "inbox"
+    inbox.mkdir(exist_ok=True)
+    got = []
+    if a.src.startswith(("http://", "https://")):
+        import urllib.parse
+        import urllib.request
+        name = Path(urllib.parse.unquote(urllib.parse.urlparse(a.src).path)).name or "video.mp4"
+        dst = inbox / name
+        print(f"下载 {name} …")
+        with urllib.request.urlopen(urllib.request.Request(a.src, headers={"User-Agent": "koubo-studio"}), timeout=60) as r, \
+                open(dst, "wb") as f:
+            total, done = int(r.headers.get("Content-Length") or 0), 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if total and done % (50 << 20) < (1 << 20):
+                    print(f"  {done / total:.0%}", flush=True)
+        got.append(dst)
+    else:
+        repo = _repo()
+        rels = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/releases"], capture_output=True, text=True,
+                                         check=True).stdout)
+        if not rels:
+            sys.exit("仓库里还没有 Release。请在 GitHub 网页：Releases → Draft a new release → 拖入视频 → Save draft。")
+        rel = next((r for r in rels if a.src in (r.get("tag_name"), r.get("name"))), None) if a.src != "latest" else rels[0]
+        if rel is None:
+            sys.exit("没找到这个 Release：" + ", ".join(r.get("name") or r.get("tag_name") or "?" for r in rels))
+        for asset in rel.get("assets", []):
+            if Path(asset["name"]).suffix.lower() not in MEDIA_EXT:
+                continue
+            dst = inbox / asset["name"]
+            print(f"下载 {asset['name']}（{asset['size'] / 1024 ** 2:.0f}MB）…", flush=True)
+            with open(dst, "wb") as f:
+                subprocess.run(["gh", "api", f"repos/{repo}/releases/assets/{asset['id']}",
+                                "-H", "Accept: application/octet-stream"], stdout=f, check=True)
+            if dst.stat().st_size != asset["size"]:
+                sys.exit(f"{asset['name']} 下载不完整（{dst.stat().st_size} / {asset['size']} 字节），请重试。")
+            got.append(dst)
+        if not got:
+            sys.exit("这个 Release 里没有视频或录音附件。")
+    for g in got:
+        print(f"已下载：{g}（{g.stat().st_size / 1024 ** 2:.0f}MB）")
+    print("下一步：python koubo.py new " + " ".join(f'"{g}"' for g in got))
 
 
 def cmd_new(a):
@@ -237,6 +303,8 @@ def main():
     p = sub.add_parser("cover"); p.add_argument("pid"); p.add_argument("--at", type=float)
     p.add_argument("--text", help="封面文字，用 \\n 换行；默认用标题")
     sub.add_parser("list")
+    p = sub.add_parser("fetch", help="下载大视频：Release 名/标签（默认 latest）或下载直链")
+    p.add_argument("src", nargs="?", default="latest")
     a = ap.parse_args()
     label = {"plan": "AI 出方案", "broll": "找配图", "render": "出片", "jianying": "导出剪映草稿",
              "check": "修改方案"}.get(a.cmd)
